@@ -1,0 +1,54 @@
+
+try:
+    cx = 1/0
+except:
+    exc_type, exc_value, exc_traceback = sys.exc_info()
+    print( "*** print_tb:", file=sys.stderr)
+    traceback.print_tb(exc_traceback, limit=1, file=sys.stderr)
+    print("*** print_exception:")
+    traceback.print_exception(exc_type, exc_value, exc_traceback, limit=2, file=sys.stderr)
+    s = traceback.format_exc()
+    print(s, file=sys.stderr)
+
+try:
+    apx = AppException("BUG", ["a1", "a2", 3])
+    raise(apx)
+except AppException as ex:
+    ex.tb = traceback.format_exc()
+    exc_type, exc_value, exc_traceback = sys.exc_info()
+    print( "*** print_tb:", file=sys.stderr)
+    traceback.print_tb(exc_traceback, limit=1, file=sys.stderr)
+    print("*** print_exception:")
+    traceback.print_exception(exc_type, exc_value, exc_traceback, limit=2, file=sys.stderr)
+
+    
+def application(environ,start_response):
+    print('**** application start ****', file=sys.stderr)
+    global c2
+    c2 += 1
+    status = '200 OK'
+    html2 =  '</div>\n' \
+           '</body>\n' \
+           '</html>\n'
+    html1 = '<html>\n' \
+           '<body>\n' \
+           '<div style="width: 100%; font-size: 40px; font-weight: bold; text-align: center;">\n' \
+           'mod_wsgi Test Page\n'
+    html = html1 + str(c1) + ' / ' + str(c2) + html2
+    response_header = [('Content-type','text/html')]
+    start_response(status,response_header)
+    return [html.encode()]
+
+https://docs.python.org/3.0/library/wsgiref.html
+def simple_app(environ, start_response):
+    setup_testing_defaults(environ)
+
+    status = b'200 OK'
+    headers = [(b'Content-type', b'text/plain; charset=utf-8')]
+
+    start_response(status, headers)
+
+    ret = [("%s: %s\n" % (key, value)).encode("utf-8")
+           for key, value in environ.items()]
+    return ret
+    
