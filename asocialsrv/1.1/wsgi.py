@@ -1,6 +1,7 @@
 import time
 import os
-import sys, traceback, json, threading
+import sys, traceback, json
+from threading import Thread, local
 
 pyp = os.path.dirname(__file__)
 print('************************ wsgi start 1 ***************', file=sys.stderr)
@@ -32,9 +33,13 @@ class AppException(Exception):
 class ExecContext:
     def __init__(self):
         self.phase = 1
+        x = local()
+        x.toto = 'toto'
 
     def go(self, environ):
         n = 0
+        x = local()
+        ec = x.toto
         while True:
             try:
                 raise AppException("BUG", ["a1", "a2", 3])
@@ -73,19 +78,24 @@ class Result:
     def status(self):
         return '200' if self.ok else '400'
 
-def application(environ, start_response):
-    x = threading.local()
-    ec = ExecContext()
-    x.toto = 'toto'
-    result = ec.go(environ)
-    print('********** result **********', file=sys.stderr)
-    print(result.status(), file=sys.stderr)
-    print(result.headers(), file=sys.stderr)
-    print(result.bytes, file=sys.stderr)
-#   start_response(result.status(), result.headers())
-    return [result.bytes]
+class Request(Thread):
+    def __init__(self, environ, start_response):
+        Thread.__init__(self)
+        self.environ = environ
+        self.start_response = start_response
+        
+    def run(self):
+        """Code à exécuter pendant l'exécution du thread."""
+        self.application(self.environ, self.start_response)
 
-res = application(None, None)
-x = threading.local()
-ec = x.toto
-n = 0
+    def application(self, environ, start_response):
+        result = ExecContext().go(environ)
+        print('********** result **********', file=sys.stderr)
+        print(result.status(), file=sys.stderr)
+        print(result.headers(), file=sys.stderr)
+        print(result.bytes, file=sys.stderr)
+    #   start_response(result.status(), result.headers())
+        return [result.bytes]
+
+r1 = Request(None, None)
+r1.start()
