@@ -33,8 +33,6 @@ class AppException(Exception):
 class ExecContext:
     def __init__(self):
         self.phase = 1
-        x = local()
-        x.toto = 'toto'
 
     def go(self, environ):
         n = 0
@@ -89,6 +87,8 @@ class Request(Thread):
         self.application(self.environ, self.start_response)
 
     def application(self, environ, start_response):
+        x = local()
+        x.toto = 'toto'
         result = ExecContext().go(environ)
         print('********** result **********', file=sys.stderr)
         print(result.status(), file=sys.stderr)
