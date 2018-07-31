@@ -1,24 +1,28 @@
 import time
 import os
-import sys, traceback, json
-from threading import Thread, local
+import sys, traceback, json, cgi
+from wsgiref.util import setup_testing_defaults, request_uri, application_uri, shift_path_info
+from wsgiref.simple_server import make_server
 
 pyp = os.path.dirname(__file__)
-print('************************ wsgi start 1 ***************', file=sys.stderr)
 sys.path.insert(0, pyp)
 
-
-if 'c1' in globals():
-    c1 += 1
-else:
-    c1 = 0
-    c2 = 0
-
-# import ptvsd
-# if c2 == 0:
-#     ptvsd.enable_attach('secret', address=('localhost', 36000))
-#     ptvsd.wait_for_attach()
-#     time.sleep(5)
+class AL:
+    LEVEL = 2
+    def setInfo():
+        AL.LEVEL = 0
+    def setWarn():
+        LEVEL = 0
+    def setError():
+        LEVEL = 0
+    def info(text):
+        if AL.LEVEL >= 0:
+            print(text, file=sys.stderr)
+    def warn(text):
+        if AL.LEVEL >= 1:
+            print(text, file=sys.stderr)
+    def error(text):
+        print(text, file=sys.stderr)
 
 class AppException(Exception):
     def __init__(self, code, args):
@@ -29,20 +33,17 @@ class AppException(Exception):
         c = code[0]
         self.toRetry = (c == 'B') or (c == 'X') or (c == 'C')
 
-
 class ExecContext:
     def __init__(self):
         self.phase = 1
 
-    def go(self, environ):
+    def go(self, environ, inputData):
         n = 0
-        x = local()
-        ec = x.toto
         while True:
             try:
-                raise AppException("BUG", ["a1", "a2", 3])
-                cx = 1/0
-                text = json.dumps({'key1':'val1', 'key2':'val2'})
+                #raise AppException("BUG", ["a1", "a2", 3])
+                #cx = 1/0
+                text = json.dumps({'key1':inputData['mdp'], 'key2':str(inputData['fic1']['val'])})
                 return Result(True).setText(text)
             except AppException as ex:
                 if n == 2 or not ex.toRetry:
@@ -52,8 +53,9 @@ class ExecContext:
                     n += 1
             except:
                 exctype, value = sys.exc_info()[:2]
-                err = {'code':'U', 'info':str(exctype) + ' - ' + str(value), 'phase':self.phase, 'tb':traceback.format_exc()}
-                return Result(False).setText(json.dumps(err))
+                err = json.dumps({'code':'U', 'info':str(exctype) + ' - ' + str(value), 'phase':self.phase, 'tb':traceback.format_exc()})
+                AL.error(err)
+                return Result(False).setText(err)
 
 
 class Result:
@@ -71,31 +73,36 @@ class Result:
         return self
 
     def headers(self):
-        return  [('Content-type', self.mime + "; charset=" + self.encoding), ('Content-length', len(self.bytes))]
+        return  [('Content-type', self.mime + "; charset=" + self.encoding), ('Content-length', str(len(self.bytes)))]
 
     def status(self):
-        return '200' if self.ok else '400'
+        return '200 OK' if self.ok else '400 Bad Request'
 
-class Request(Thread):
-    def __init__(self, environ, start_response):
-        Thread.__init__(self)
-        self.environ = environ
-        self.start_response = start_response
-        
-    def run(self):
-        """Code à exécuter pendant l'exécution du thread."""
-        self.application(self.environ, self.start_response)
+def inputData(environ):
+    ip = {}
+    form = cgi.FieldStorage(fp=environ['wsgi.input'], environ=environ, keep_blank_values=1)
+    for x in form:
+        f = form[x]
+        filename = f.filename
+        if filename:
+            ip[x] ={'name':x, 'filename':filename, 'type':f.type, 'val':f.file.read()}
+        else:
+            ip[x] ={'name':x, 'type':'arg', 'val':f.value}
+    return ip
 
-    def application(self, environ, start_response):
-        x = local()
-        x.toto = 'toto'
-        result = ExecContext().go(environ)
-        print('********** result **********', file=sys.stderr)
-        print(result.status(), file=sys.stderr)
-        print(result.headers(), file=sys.stderr)
-        print(result.bytes, file=sys.stderr)
-    #   start_response(result.status(), result.headers())
-        return [result.bytes]
+def app(environ, start_response):
+    result = ExecContext().go(environ, inputData(environ))
+    AL.info(request_uri(environ, include_query=1))
+    AL.info(application_uri(environ))
+    if AL.LEVEL == 0: 
+        AL.info('********** result **********') 
+        AL.info(result.status())
+        AL.info(result.headers())
+        AL.info(result.bytes)
+    start_response(result.status(), result.headers())
+    return [result.bytes]
 
-r1 = Request(None, None)
-r1.start()
+AL.setInfo()
+httpd = make_server('localhost', 8000, app)
+AL.warn("Serving on port 8000...")
+httpd.serve_forever()
