@@ -1,7 +1,7 @@
 import time
 import os
 import sys, traceback, json, cgi
-from wsgiref.util import setup_testing_defaults, request_uri, application_uri, shift_path_info
+from wsgiref.util import request_uri, application_uri, shift_path_info
 from wsgiref.simple_server import make_server
 
 pyp = os.path.dirname(__file__)
@@ -12,9 +12,9 @@ class AL:
     def setInfo():
         AL.LEVEL = 0
     def setWarn():
-        LEVEL = 0
+        AL.LEVEL = 0
     def setError():
-        LEVEL = 0
+        AL.LEVEL = 0
     def info(text):
         if AL.LEVEL >= 0:
             print(text, file=sys.stderr)
