@@ -91,13 +91,7 @@ class Url:
         global cfg
         p = environ["PATH_INFO"] # /cp/prod-home
         AL.info(p)
-        
-        # on enlève le context-path s'il y en a un
-        l = len(cfg.cp)
-        if l != 0 and p.startswith("/" + cfg.cp + "/"):
-            p = p[l + 2:]       
-        else:
-            p = p[1:]
+
         # on isole l'extension
         self.mode = 1
         self.ext = ""
@@ -110,6 +104,27 @@ class Url:
             if self.ext.startswith("i"):
                 self.mode = 0
         
+        if p.startswith("/" + cfg.cpui + "/"):
+            l = len(cfg.cpui) + 2
+            self.type = 4
+            x = p[l:]
+            i = p.find("/", l)
+            x = "" if str(self.ext) == 0 else "." + self.ext
+            if i == -1:
+                self.resbuild = p
+                self.resname = "" + x
+            else:
+                self.resbuild = p[l:i]
+                self.resname = p[i + 1:] + x
+            return
+        
+        # on enlève le context-path s'il y en a un
+        l = len(cfg.cp)
+        if l != 0 and p.startswith("/" + cfg.cp + "/"):
+            p = p[l + 2:]       
+        else:
+            p = p[1:]
+        
         if self.ext == "js" and p == "sw":
             self.type = 1
             return
@@ -117,19 +132,6 @@ class Url:
         if p.startswith("z/"):
             self.type = 2
             self.org = p[2:]
-            return
-        
-        if p.startswith("$ui/"):
-            self.type = 4
-            x = p[4:]
-            i = p.find("/", 4)
-            x = "" if str(self.ext) == 0 else "." + self.ext
-            if i == -1:
-                self.resbuild = p
-                self.resname = "" + x
-            else:
-                self.resbuild = p[4:i]
-                self.resname = p[i + 1:] + x
             return
         
         self.type = 3
@@ -197,8 +199,8 @@ def getSwjs():
                 lst.append(cx + filepath[lx:])
         d1 = "const shortcuts = " + json.dumps(cfg.homeShortcuts) + ";\n"
         d2 = "const build = \"" + build + "\";\nconst cp = \"" + cfg.cp + "\";\nconst lres = [\n"
-        f = open(p, "r")
-        t = f.read();
+        f = open(p, "rb")
+        t = f.read().decode("utf-8");
         return (d1 + d2 + ",\n".join(lst) + "\n];\n" + t).encode("utf-8")
     except Exception as e:
         raise AppEx(cfg.langs[0], "swjs", [p, str(e)])
@@ -236,8 +238,8 @@ def getHome(url):
     try:
         lst = []
         done = False
-        cx = "/" if len(cfg.cp) == 0 else "/" + cfg.cp + "/"
-        base = "<base href=\"" + cx + "$ui/" + build + "/\" data-build=\"" + build + "\">\n"
+        base = "<base href=\"/" + cfg.cpui + "/" + build + "/\" data-build=\"" + build + "\">\n"
+#        base = "<base href=\"/" + cfg.cpui + "/" + build + "/\" data-build=\"" + build + "\" data-cpui=\"" + cfg.cpui + "\" data-cp=\"" + cfg.cp + "\">\n"
         with open(p, "r") as ins:
             for line in ins:
                 if done:
@@ -277,7 +279,7 @@ mimeTypes =  {
         "jpeg":"image/jpeg"
 }
 
-def app(environ, start_response):
+def application(environ, start_response):
     global cfg
     global mimeTypes
     global pyp
@@ -309,8 +311,9 @@ def app(environ, start_response):
         txt = (str(e) + tb).encode("utf-8")
         start_response("400 Bad Request", [('Content-type', "text/plain"), ('Content-length', str(len(txt)))])
         return [txt]
-        
-AL.setInfo()
-httpd = make_server('localhost', 8000, app)
-AL.warn("Serving on port 8000...")
-httpd.serve_forever()
+
+if cfg.debugserver:
+    AL.setInfo()
+    httpd = make_server('localhost', 8000, application)
+    AL.warn("Serving on port 8000...")
+    httpd.serve_forever()
