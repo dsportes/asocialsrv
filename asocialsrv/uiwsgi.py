@@ -187,18 +187,19 @@ def getSwjs():
     p = uiPath(build, "base/sw.js")
     dx = uiPath(build, "")
     lx = len(dx)
-    cx = "/" + cfg.cp + "/$ui/" if (len(cfg.cp) != 0) else "/$ui/"
+    cx = "/" + cfg.cpui + "/"
     try:
         lst = []
         for subdir, dirs, files in os.walk(dx):
             for file in files:
                 if subdir.endswith("/"):
-                    filepath = subdir + file
+                    filepath = (subdir + file)[lx:]
                 else:
-                    filepath = subdir + "/" + file
-                lst.append(cx + filepath[lx:])
+                    filepath = (subdir + "/" + file)[lx:]
+                n = cx + build + "/" + filepath
+                lst.append("\"" + n + "\"")
         d1 = "const shortcuts = " + json.dumps(cfg.homeShortcuts) + ";\n"
-        d2 = "const build = \"" + build + "\";\nconst cp = \"" + cfg.cp + "\";\nconst lres = [\n"
+        d2 = "const build = [" + str(cfg.inb) + ", " +  str(cfg.uib[0]) + "];\nconst cp = \"" + cfg.cp + "\";\nconst cpui = \"" + cfg.cpui + "\";\nconst lres = [\n"
         f = open(p, "rb")
         t = f.read().decode("utf-8");
         return (d1 + d2 + ",\n".join(lst) + "\n];\n" + t).encode("utf-8")

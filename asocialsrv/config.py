@@ -24,8 +24,8 @@ class Cfg:
         self.langs = ["fr", "en"]
         
         # path sur le file-system des ressources ui (AVEC / à la fin : il y a une build derrire, SANS il n'y PAS de build )
-        self.uipath = "/home/daniel/git/asocialui/asocialui"
-        # self.uipath = "/home/daniel/git/asocialui/asocialui/build/"
+        #self.uipath = "/home/daniel/git/asocialui/asocialui"
+        self.uipath = "/home/daniel/git/asocialui/asocialui/build/"
         
         # si True active le serveur de debug sur le port 8000
         self.debugserver = False
