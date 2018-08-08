@@ -1,16 +1,17 @@
 """
 Trois services : (quatre en test)
+cp/ : "" "cp/"
 a) génération de home page
-https://site1/cpui/org/page_build.mode?lg=fr&a=xx&b=yy
-https://site1/org/page_build.mode?lg=fr&a=xx&b=yy
+https://site1/cp/org-home.i?lang=fr&build=1.1.0&a=xx&b=yy
 
 b) génération du script du service worker
-https://site/cpui/org/sw_in.ui.js
+https://site/cp/$sw.js
 
-c) ping UI retournant le site du serveur op et ses builds
-https://site/cpui/ping
+c) info UI retournant le site du serveur op et ses builds pour l'organisation org
+https://site/cp/$sw.z/org
 
 d) service des ressources UI statiques (pour test local)
+https://site1/cp/$ui/1.1/bas/app.js
 """
 
 import os, sys, json, traceback
@@ -89,54 +90,54 @@ class AppEx(Exception):
 class Url:
     def __init__(self, environ):
         global cfg
+        cpui = cfg.cp + "/$ui" if len(cfg.cp) != 0 else "$ui"
         p = environ["PATH_INFO"] # /cp/prod-home
         AL.info(p)
 
-        # on isole l'extension
-        self.mode = 1
-        self.ext = ""
-        i = p.rfind(".")
-        if i != -1:
-            self.ext = p[i + 1:]
-            p = p[:i]
-            if self.ext.startswith("a"):
-                self.mode = 2
-            if self.ext.startswith("i"):
-                self.mode = 0
-        
-        if p.startswith("/" + cfg.cpui + "/"):
-            l = len(cfg.cpui) + 2
-            self.type = 4
-            x = p[l:]
-            i = p.find("/", l)
-            x = "" if str(self.ext) == 0 else "." + self.ext
-            if i == -1:
-                self.resbuild = p
-                self.resname = "" + x
-            else:
-                self.resbuild = p[l:i]
-                self.resname = p[i + 1:] + x
-            return
-        
         # on enlève le context-path s'il y en a un
         l = len(cfg.cp)
         if l != 0 and p.startswith("/" + cfg.cp + "/"):
             p = p[l + 2:]       
         else:
             p = p[1:]
-        
-        if self.ext == "js" and p == "sw":
+
+        if p == "$sw.js":
             self.type = 1
             return
         
-        if p.startswith("z/"):
+        if p.startswith("$sw.z/"):
             self.type = 2
-            self.org = p[2:]
+            self.org = p[6:]
             return
         
+        # extension
+        self.mode = 1
+        self.ext = ""
+        i = p.rfind(".")
+        if i != -1:
+            self.ext = p[i + 1:]
+            if self.ext.startswith("a"):
+                self.mode = 2
+            if self.ext.startswith("i"):
+                self.mode = 0
+
+        if p.startswith("$ui/"):
+            self.type = 4
+            x = p[4:]
+            i = x.find("/", l)
+            if i == -1:
+                self.resbuild = x
+                self.resname = ""
+            else:
+                self.resbuild = x[:i]
+                self.resname = x[i + 1:]
+            return
+                                
         self.type = 3
+        if self.ext != "":
+            p = p[:len(p) - len(self.ext)]
         orgHome = p
-        if len(p) == 0:
+        if len(orgHome) == 0:
             orgHome = homeShortcut()
         else:
             i = orgHome.find("-")
@@ -187,22 +188,23 @@ def getSwjs():
     p = uiPath(build, "base/sw.js")
     dx = uiPath(build, "")
     lx = len(dx)
-    cx = "/" + cfg.cpui + "/"
     try:
         lst = []
         for subdir, dirs, files in os.walk(dx):
             for file in files:
                 if subdir.endswith("/"):
+                    if file.startswith("."):
+                        continue
                     filepath = (subdir + file)[lx:]
                 else:
                     filepath = (subdir + "/" + file)[lx:]
-                n = cx + build + "/" + filepath
-                lst.append("\"" + n + "\"")
+                lst.append("x + \"" + filepath + "\"")
         d1 = "const shortcuts = " + json.dumps(cfg.homeShortcuts) + ";\n"
-        d2 = "const build = [" + str(cfg.inb) + ", " +  str(cfg.uib[0]) + "];\nconst cp = \"" + cfg.cp + "\";\nconst cpui = \"" + cfg.cpui + "\";\nconst lres = [\n"
+        d2 = "const inb = " + str(cfg.inb) + ";\nconst uib = " +  str(cfg.uib) + ";\nconst cp = \"" + cfg.cp + "\";\n;"
+        d3 = "const CP = cp ? '/' + cp + '/' : '/';\nconst CPOP = CP + '$op/';\nconst CPUI = CP + '$ui/';\nconst BC = inb + '.' + uib[0];\nconst x = CPUI + BC +'/';\nconst lres = [\n"
         f = open(p, "rb")
         t = f.read().decode("utf-8");
-        return (d1 + d2 + ",\n".join(lst) + "\n];\n" + t).encode("utf-8")
+        return (d1 + d2 + d3 + ",\n".join(lst) + "\n];\n" + t).encode("utf-8")
     except Exception as e:
         raise AppEx(cfg.langs[0], "swjs", [p, str(e)])
 
@@ -211,7 +213,7 @@ def info(org):
     opsite = cfg.opsites.get(org, None)
     if opsite is None:
         raise AppEx(cfg.langs[0], "org", [org])
-    return json.dumps({"uib":[cfg.inb, cfg.uib[0]], "opsite":opsite}).encode("utf-8")
+    return json.dumps({"inb":cfg.inb, "uib":cfg.uib, "opsite":opsite}).encode("utf-8")
 
 def getRes(resbuild, resname):
     global cfg
@@ -225,6 +227,7 @@ def getRes(resbuild, resname):
 def getHome(url):
     global cfg
     build = str(cfg.inb) + "." + str(cfg.uib[0])
+    cpui = cfg.cp + "/$ui" if len(cfg.cp) != 0 else "$ui"
     if url.breq is not None:
         if url.breq[0] != cfg.inb:
             raise AppEx(url.lang, "majeur", cfg.inb, url.breq[0])
@@ -239,8 +242,7 @@ def getHome(url):
     try:
         lst = []
         done = False
-        base = "<base href=\"/" + cfg.cpui + "/" + build + "/\" data-build=\"" + build + "\">\n"
-#        base = "<base href=\"/" + cfg.cpui + "/" + build + "/\" data-build=\"" + build + "\" data-cpui=\"" + cfg.cpui + "\" data-cp=\"" + cfg.cp + "\">\n"
+        base = "<base href=\"/" + cpui + "/" + build + "/\" data-build=\"" + build + "\">\n"
         with open(p, "r") as ins:
             for line in ins:
                 if done:
