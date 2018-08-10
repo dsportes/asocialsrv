@@ -320,7 +320,7 @@ def application(environ, start_response):
         return [txt]
 
 if cfg.debugserver:
-    al.setInfo()
+    al.setWarn()
     httpd = make_server('localhost', 8000, application)
     al.warn("Serving on port 8000...")
     httpd.serve_forever()

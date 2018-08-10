@@ -19,7 +19,7 @@ class AL:
             print(text, file=sys.stderr)
     def error(self, text):
         print(text, file=sys.stderr)
-al = AL(2)
+al = AL(1)
 
 class Dic: #
     def __init__(self):
