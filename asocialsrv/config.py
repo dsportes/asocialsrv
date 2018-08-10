@@ -1,7 +1,7 @@
 ############## Classe Configuration
 class Cfg:
     def __init__(self):
-        # context-path pages d'accueil
+        # context-path pages d'accuei
         self.cp = "cp"
         
         # niveau d'intrerface
