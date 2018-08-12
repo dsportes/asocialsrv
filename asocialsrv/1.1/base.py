@@ -7,5 +7,6 @@ class InfoOP(Operation):
     def __init__(self, execCtx):
         super().__init__(execCtx)
         
-    def work(self): #
-        return Result().setJson({'inb':cfg.inb, 'opb':cfg.opb, 'uiba':cfg.uiba})
+    def work(self): 
+        #raise AppExc("ATEST", ["toto"])
+        return Result(self).setJson({'inb':cfg.inb, 'opb':cfg.opb, 'uiba':cfg.uiba})

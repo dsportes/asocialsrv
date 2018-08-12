@@ -1,8 +1,16 @@
-# import ptvsd
-# if c2 == 0:
-#     ptvsd.enable_attach('secret', address=('localhost', 36000))
-#     ptvsd.wait_for_attach()
-#     time.sleep(5)
+netstat -aon | findstr 8090 // Windows
+(le pid est à la fin)
+taskkill /PID 26356 /F
+
+netstat -nlp | grep :8090 // Linux
+kill 9999
+ 
+
+import ptvsd
+if c2 == 0:
+    ptvsd.enable_attach('secret', address=('localhost', 36000))
+    ptvsd.wait_for_attach()
+    time.sleep(5)
 
 def is_post_request(environ):
     if environ['REQUEST_METHOD'].upper() != 'POST':

@@ -1,5 +1,14 @@
 import os, sys, traceback, json, cgi, importlib
 from config import cfg
+from datetime import datetime
+
+epoch0 = datetime(1970, 1, 1)
+
+def epochNow():
+    dt = datetime.utcnow()
+    ms = int(dt.microsecond / 1000)
+    n = int((dt - epoch0).total_seconds()) * 1000
+    return n + ms
 
 class AL:
     def __init__(self, lvl):
@@ -52,12 +61,12 @@ class Dic: #
 dics = Dic()
 
 class AppExc(Exception):
-    def __init__(self, code, args, lang="?"):
-        self.msg = dics.format(code, args, lang)
+    def __init__(self, err, args=[], lang="?"):
+        self.msg = dics.format(err, args, lang)
         Exception.__init__(self, self.msg)
         self.args = args
-        self.code = code
-        c = code[0]
+        self.err = err
+        c = err[0]
         self.toRetry = (c == 'B') or (c == 'X') or (c == 'C')
 
 class MimeTypes:
@@ -93,12 +102,17 @@ class MimeTypes:
 mime = MimeTypes()        
 
 class Result:
-    stmap = {'200':'200 OK', '400':'400 Bad Request', '404':'404 - Not Found'}
-    def __init__(self, status=200):
-        self.st = status
+    def __init__(self, op=None, notFound=False):    # op : Operation OU ExecCtc
+        self.origin = op.origin if op is not None else None
+        self.notFound = notFound
         self.mime = "application/octet-stream"
         self.encoding = "utf-8"
         self.bytes = u''
+    
+    def setOptions(self):
+        self.origin = "*"
+        self.bytes = "OK".encode(self.encoding)
+        return self
     
     def setText(self, text, ext="text/plain", encoding="utf-8"):
         self.mime = mime.type(ext)
@@ -116,23 +130,27 @@ class Result:
         return self
 
     def headers(self):
-        return  [('Content-type', self.mime + "; charset=" + self.encoding), 
-                 ('Content-length', str(len(self.bytes))), 
-                 ('Access-Control-Allow-Origin', cfg.origins),
-                 ('Access-Control-Allow-Headers', 'X-Custom-Header')]
+        lst = []
+        lst.append(('Content-type', self.mime + "; charset=" + self.encoding)) 
+        lst.append(('Content-length', str(len(self.bytes))))
+        if self.origin is not None:
+            lst.append(('Access-Control-Allow-Origin', self.origin))
+        lst.append(('Access-Control-Allow-Headers', 'X-Custom-Header'))
+        return lst
 
     def status(self):
-        return Result.stmap.get(str(self.st), '400 Bad Request')
+        return '404 Not Found' if self.notFound else '200 OK'
 
 class Operation:
     def __init__(self, execCtx):
         self.execCtx = execCtx
+        self.origin = execCtx.origin
         self.param = execCtx.param
         self.inputData = execCtx.inputData
         self.opName = execCtx.opName
     
     def work(self):
-        return Result().setJson({'operation':self.operation})
+        return Result(200, self).setJson({'operation':self.operation})
 
 class ExecCtx:
     modules = {}
@@ -140,7 +158,7 @@ class ExecCtx:
     def getClass(mod, cl):  # self.operation = getattr(module, cl)(self)
         e = ExecCtx.modules.get(mod, None)
         if e is None:
-            module = importlib.import_module(mod);
+            module = importlib.import_module(mod)
             e = {'module':module, 'classes':{}}
             ExecCtx.modules[mod] = e
         else:
@@ -148,7 +166,7 @@ class ExecCtx:
         c = e['classes'].get(cl, None)
         if c is None:
             c = getattr(module, cl)
-            e['classes'][cl] = c;
+            e['classes'][cl] = c
         return c        
     
     def __init__(self, environ, opPath): # opPath : path après /$op/4.7/org/base.InfoOP
@@ -157,8 +175,27 @@ class ExecCtx:
             self.phase = 1
             self.inputData = {}
             self.param = {}            
-            self.xch = environ.get("HTTP_X_CUSTOM_HEADER", None)
             environ.setdefault('QUERY_STRING', '')
+
+            xch = environ.get("HTTP_X_CUSTOM_HEADER", None)
+            if xch is None:
+                raise AppExc("SECORIG1")
+            try:
+                self.xch = json.loads(xch)
+            except:
+                self.xch = None
+            if self.xch is None:
+                raise AppExc("SECORIG1")
+            self.origin = self.xch.get("origin", "?")
+            if self.origin not in cfg.origins:
+                raise AppExc("SECORIG2", [self.origin])
+            
+            majeur = self.xch.get("inb", 0)
+            mineur = self.xch.get("uib", 0)
+            borig = str(majeur) + "." + str(mineur)
+            if majeur != cfg.inb or mineur < cfg.opb[0] or mineur in cfg.opb[1:]:
+                raise AppExc("DBUILD", [borig])
+            
             form = cgi.FieldStorage(fp=environ['wsgi.input'], environ=environ, keep_blank_values=1)
             for x in form:
                 f = form[x]
@@ -190,14 +227,14 @@ class ExecCtx:
                 raise AppExc("BOPNAME", [self.opName])
                 
         except AppExc as ex:
-            err = {'code':ex.code, 'info':ex.msg, 'args':ex.args, 'phase':self.phase, 'tb':traceback.format_exc()}
+            err = {'err':ex.err, 'info':ex.msg, 'args':ex.args, 'phase':self.phase, 'tb':traceback.format_exc()}
             al.warn(err)
-            self.error = Result(False).setJson(err)
+            self.error = Result(self).setJson(err)
         except Exception as e:
             exctype, value = sys.exc_info()[:2]
-            err = {'code':'U', 'info':str(exctype) + ' - ' + str(value), 'phase':self.phase, 'tb':traceback.format_exc()}
+            err = {'err':'U', 'info':str(exctype) + ' - ' + str(value), 'phase':self.phase, 'tb':traceback.format_exc()}
             al.error(err)
-            self.error = Result(False).setJson(err)
+            self.error = Result(self).setJson(err)
         
     def go(self):
         if self.error is not None:
@@ -208,42 +245,41 @@ class ExecCtx:
                 return self.operation.work()
             except AppExc as ex:
                 if n == 2 or not ex.toRetry:
-                    err = {'code':ex.code, 'info':ex.msg, 'args':ex.args, 'phase':self.phase, 'tb':traceback.format_exc()}
+                    err = {'err':ex.err, 'info':ex.msg, 'args':ex.args, 'phase':self.phase, 'tb':traceback.format_exc()}
                     al.warn(err)
-                    return Result(False).setJson(err)
+                    return Result(self).setJson(err)
                 else:
                     n += 1
             except:
                 exctype, value = sys.exc_info()[:2]
-                err = {'code':'U', 'info':str(exctype) + ' - ' + str(value), 'phase':self.phase, 'tb':traceback.format_exc()}
+                err = {'err':'U', 'info':str(exctype) + ' - ' + str(value), 'phase':self.phase, 'tb':traceback.format_exc()}
                 al.error(err)
-                return Result(False).setJson(err)
+                return Result(self).setJson(err)
 
 def homeShortcut(sc = None):
     return cfg.homeShortcuts["?"] if sc is None else cfg.homeShortcuts.get(sc, None)
 
 class Url:
     def __init__(self, environ):
-        global al
         p = environ["PATH_INFO"]    # /cp/prod-home
+        self.cp = cfg.cp
+        l = len(self.cp)
+        if l != 0 and p.startswith("/" + self.cp + "/"):
+            p = p[l + 1:]
         al.info(p)
 
-        i = p.find("/$swjs")        # service worker script
-        if i != -1:
+        if p == "/$swjs":           # service worker script
             self.type = 1
-            self.cp = "" if i == 0 else p[1:i]
             return
         
-        i = p.find("$info/")        # info à propos d'une organisation
-        if i != -1:
+        if p.startswith("/$info/"): # info à propos d'une organisation
             self.type = 2
-            self.org = p[i + 6:]
+            self.org = p[7:]
             return
 
-        i = p.find("/$ui/")         # Accès à une ressource UI /$ui/4.10/...ext
-        if i != -1:
+        if p.startswith("/$ui/"):   # Accès à une ressource UI /$ui/4.10/...ext
             self.type = 4
-            x = p[i + 5:]
+            x = p[6:]
             i = x.find("/")
             if i == -1:
                 self.resbuild = x
@@ -255,10 +291,9 @@ class Url:
             self.ext = "" if i == -1 else self.resname[i + 1:]
             return
         
-        i = p.find("/$op/")     # Appel d'une opération /$op/4.7/mod.Op/org/a/b
-        if i != -1:
+        if p.startswith("/$op/"):   # Appel d'une opération /$op/4.7/mod.Op/org/a/b
             self.type = 5
-            x = p[i + 5:]
+            x = p[6:]
             i = x.find("/")
             self.opPath = "" if i == -1 else x[i + 1:]  # mod.Op/org/a/b
             return
@@ -271,24 +306,19 @@ class Url:
         self.home = ""
         self.lang = cfg.lang
         self.breq = None
-        self.cp = ""
         
-        p1 = ""
-        i = p.rfind("/")
-        if i >= 0:
-            self.cp = p[1:i]
-            p1 = p[i + 1:] 
+        # al.error("path1 : " + p)
 
         # extension
-        i = p1.rfind(".")
+        i = p.rfind(".")
         if i != -1:
-            self.ext = p1[i + 1:]
+            self.ext = p[i + 1:]
             if self.ext.startswith("a"):
                 self.mode = 2
             if self.ext.startswith("i"):
                 self.mode = 0
 
-        orgHome = p1 if len(self.ext) == 0 else p1[:len(p1) - len(self.ext) - 1]
+        orgHome = p if len(self.ext) == 0 else p[:len(p) - len(self.ext) - 1]
         if len(orgHome) == 0:
             orgHome = homeShortcut()
         else:
@@ -331,7 +361,7 @@ def uiPath(resbuild, resname):
         p = cfg.uipath + resbuild + "/" + resname
     return p
            
-def getSwjs(cp):
+def getSwjs():
     build = str(cfg.inb) + "." + str(cfg.uib[0])
     p = uiPath(build, "base/sw.js")
     dx = uiPath(build, "")
@@ -348,11 +378,11 @@ def getSwjs(cp):
                     filepath = (subdir + "/" + file)[lx:]
                 lst.append("x + \"" + filepath + "\"")
         d1 = "const shortcuts = " + json.dumps(cfg.homeShortcuts) + ";\n"
-        d2 = "const inb = " + str(cfg.inb) + ";\nconst uib = " +  str(cfg.uib) + ";\nconst cp = \"" + cp + "\";\n;"
+        d2 = "const inb = " + str(cfg.inb) + ";\nconst uib = " +  str(cfg.uib) + ";\nconst cp = \"" + cfg.cp + "\";\n;"
         d3 = "const CP = cp ? '/' + cp + '/' : '/';\nconst CPOP = CP + '$op/';\nconst CPUI = CP + '$ui/';\nconst BC = inb + '.' + uib[0];\nconst x = CPUI + BC +'/';\nconst lres = [\n"
         f = open(p, "rb")
-        t = f.read().decode("utf-8");
-        text = d1 + d2 + d3 + ",\n".join(lst) + "\n];\n" + t;
+        t = f.read().decode("utf-8")
+        text = d1 + d2 + d3 + ",\n".join(lst) + "\n];\n" + t
         return Result().setText(text, "js")
     except Exception as e:
         raise AppExc("swjs", [p, str(e)])
@@ -366,11 +396,11 @@ def getRes(resbuild, resname, ext):
         f = open(p, "rb")
         return Result().setBytes(f.read(), ext)
     except Exception as e:
-        raise AppExc("res", [p, str(e)])
+        raise AppExc("notFound", [p, str(e)])
 
 def getHome(url):
     build = str(cfg.inb) + "." + str(cfg.uib[0])
-    cpui = url.cp + "/$ui" if len(url.cp) != 0 else "$ui"
+    cpui = cfg.cp + "/$ui" if len(cfg.cp) != 0 else "$ui"
     if url.breq is not None:
         if url.breq[0] != cfg.inb:
             raise AppExc("majeur", [cfg.inb, url.breq[0]], url.lang)
@@ -385,7 +415,8 @@ def getHome(url):
     try:
         lst = []
         done = False
-        base = "<base href=\"/" + cpui + "/" + build + "/\" data-build=\"" + build + "\">\n"
+        base = "<base href=\"/" + cpui + "/" + build + "/\" data-build=\"" + build + "\" data-maker=\"WebUI-" + url.stamp.toString() + "\">"
+        al.error("tag base : " + base)
         with open(p, "r") as ins:
             for line in ins:
                 if done:
@@ -409,9 +440,12 @@ dics.set("fr", "BPARAMJSON", "param [{0}]: syntaxe JSON incorrecte {1}")
 dics.set("fr", "BURL", "url mal formée : [{0}]")
 dics.set("fr", "BOPNAME", "opération inconnue : [{0}]")
 dics.set("fr", "BOPINIT", "opération non instantiable : [{0}]")
+dics.set("fr", "SECORIG1", "opération rejetée car provenant d'une origine inconnue")
+dics.set("fr", "SECORIG2", "opération rejetée car provenant d'une origine non acceptée : [{0}]")
+dics.set("fr", "DBUILD", "la version de l'application graphique [{0}] n'est pas acceptée par le serveur des opérations")
 
 dics.set("fr", "rni", "Requête non identifiée [{0}]")
-dics.set("fr", "res", "Ressource non lisible [{0}]. Cause : {1}")
+dics.set("fr", "notFound", "Ressource non trouvée / lisible [{0}]. Cause : {1}")
 dics.set("fr", "swjs", "Ressource sw.js non lisible [{0}]. Cause : {1}")
 dics.set("fr", "rb", "Le répertoire de la build [{0}] n'est pas accessible : [{1}]")
 dics.set("fr", "home", "La page d'accueil [{0}] pour la build [{1}] (path:[{2}]) n'est pas accessible")
@@ -424,16 +458,20 @@ if cfg.mode == 2:   # mettre dans le path le répertoire qui héberge la build c
     sys.path.insert(0, pyp + "/" + str(cfg.inb) + "." + str(cfg.opb[0]))
     # module = importlib.import_module("base")
     # print("base")
-#    for x in sys.path:
-#        print(x)
+    # for x in sys.path:
+    #      print(x)
 
 def application(environ, start_response):
-    if environ["REQUEST_METHOD"] == "OPTIONS":
-        return Result().setText("")
+    method = environ.get("REQUEST_METHOD", "")
+    if method == "" or method == "OPTIONS":
+        al.info("OPTIONS : " + environ["PATH_INFO"])
+        return Result().setOptions()     # c'est une OPTIONS ?
+
     try:
         url = Url(environ)
+        url.stamp = Stamp(epochNow())
         if url.type == 1:
-            return getSwjs(url.cp); 
+            return getSwjs()
         if url.type == 2:
             return info(url.org)
         if url.type == 3:
@@ -445,11 +483,141 @@ def application(environ, start_response):
         raise AppExc("rni", environ["PATH_INFO"])
     except AppExc as e:
         al.warn(e.msg)
-        return Result(400 if e.code != "res" else 404).setText(str(e.msg))
+        return Result(None, e.err == "notFound").setText(str(e.msg))
     except Exception as e:
         traceback.print_exc()
-        return Result(400).setText(str(e) + traceback.format_exc())
+        return Result().setText(str(e) + traceback.format_exc())
     
-al.setInfo()
+al.level = cfg.loglevel
+
+class Stamp:
+    _minEpoch = 946684800000
+    _maxEpoch = 4102444799999
+    _nbj = [[0,31,28,31,30,31,30,31,31,30,31,30,31], [0,31,29,31,30,31,30,31,31,30,31,30,31]]
+    _nbjc = [[0,0,0,0,0,0,0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0,0,0,0,0,0,0]]
+    i = 0
+    while i < 2:
+        m = 1
+        while m < 14:
+            _nbjc[i][m] = 0
+            k = 1
+            while k < m:
+                _nbjc[i][m] += _nbj[i][k]
+                k += 1
+            m += 1
+        i += 1
+    _qa = (365 * 4) + 1
+    _nbjq = [0, 366, 366 + 365, 366 + 365 + 365, 366 + 365 + 365 + 365]
+    # nb jours 2000-01-01 - 1970-01-01 - 30 années dont 7 bissextiles - C'était un Samedi
+    _nbj00 = (365 * 30) + 7
+    _wd00 = 5
     
+    def nbj(yy, mm):
+        return Stamp._nbj[1 if yy % 4 == 0 else 0][mm]
     
+    def truncJJ(yy, mm, jj):
+        x = Stamp._nbj[1 if yy % 4 == 0 else 0][mm]
+        return x if jj > x else jj
+    
+    def __init__(self, epoch):
+        if epoch < Stamp._minEpoch:
+            epoch = Stamp._minEpoch
+        if epoch <= Stamp._maxEpoch:
+            self.epoch = epoch
+            self.nbd00 = (epoch // 86400000) - Stamp._nbj00
+            self.wd = ((self.nbd00 + Stamp._wd00) % 7) + 1
+            self.nbms = epoch % 86400000
+            self.epoch00 = (self.nbd00 * 86400000) + self.nbms
+            self.yy = (self.nbd00 // Stamp._qa) * 4
+            x1 = self.nbd00 % Stamp._qa
+            na = 0
+            while True:
+                nbjcx = Stamp._nbjc[1 if self.yy % 4 == 0 else 0]
+                if x1 < Stamp._nbjq[na + 1]:
+                    nj = x1 - Stamp._nbjq[na]
+                    self.MM = 1
+                    while True:
+                        if nj < nbjcx[self.MM+1]:
+                            self.dd = nj - nbjcx[self.MM] + 1
+                            break                      
+                        self.MM += 1
+                    break
+                self.yy += 1
+                na += 1
+            self.date = self.dd + (self.MM * 100) + (self.yy * 10000)
+            self.HH = self.nbms // 3600000
+            x = self.nbms % 3600000
+            self.mm = x // 60000
+            x = self.nbms % 60000
+            self.ss = x // 1000
+            self.SSS = x % 1000
+            self.time = self.SSS + (self.ss * 1000) + (self.mm * 100000) + (self.HH * 10000000)
+            self.stamp = (self.date * 1000000000) + self.time
+        else:
+            if epoch > 20991231235959999:
+                epoch =  20991231235959999
+            self.SSS = epoch % 1000
+            x = epoch // 1000
+            self.ss = x % 100
+            x = x // 100
+            self.mm = x % 100
+            x = x // 100
+            self.HH = x % 100
+            x = x // 100
+            self.dd = x % 100
+            x = x // 100
+            self.MM = x % 100
+            x = x // 100
+            self.yy = x % 100
+            if self.yy < 0:
+                self.yy = 0
+            if self.yy > 99: 
+                self.yy = 99
+            if self.MM < 1: 
+                self.MM = 1
+            if self.MM > 12:
+                self.MM = 12
+            self.dd =  1 if self.dd < 1 else Stamp.truncJJ(self.yy, self.MM, self.dd)
+            if self.HH < 0:
+                self.HH = 0
+            if self.mm < 0:
+                self.mm = 0
+            if self.ss < 0:
+                self.ss = 0
+            if self.SSS < 0:
+                self.SSS = 0
+            if self.HH > 23:
+                self.HH = 23
+            if self.mm > 59:
+                self.mm = 59
+            if self.ss > 59:
+                self.ss = 59
+            if self.SSS > 999:
+                self.SSS = 999
+            self.time = self.SSS + (self.ss * 1000) + (self.mm * 100000) + (self.HH * 10000000)
+            self.date = self.dd + (self.MM * 100) + (self.yy * 10000)
+            self.stamp = (self.date * 1000000000) + self.time
+            self.q = Stamp._nbjc[1 if self.yy % 4 == 0 else 0][self.MM] + self.dd
+            self.nbd00 = ((self.yy // 4) * Stamp._qa) + Stamp._nbjq[(self.yy % 4)] + self.q - 1
+            self.nbms = self.SSS + (self.ss * 1000) + (self.mm * 60000) + (self.HH * 3600000)
+            self.epoch00 = (self.nbd00 * 86400000) + self.nbms
+            self.epoch = ((self.nbd00 + Stamp._nbj00) * 86400000) + self.nbms
+            self.wd = ((self.nbd00 + Stamp._wd00) % 7) + 1
+    
+    def toString(self):
+        s = str(self.stamp)
+        return "0" + s if len(s) < 15 else s
+
+    def test():
+        l1 = epochNow()
+        st = Stamp(l1)
+        l2 = st.epoch
+        l3 = st.stamp
+        st2 = Stamp(l2)
+        l2b = st2.epoch
+        l2c = st2.stamp
+        st3 = Stamp(l3)
+        l3b = st3.epoch
+        l3c = st3.stamp
+
+Stamp.test()
