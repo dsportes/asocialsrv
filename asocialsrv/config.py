@@ -14,7 +14,7 @@ class Cfg:
         self.inb = 1
         
         # builds UI servies, la première est l'officielle (une seule obligatoire)
-        self.uib = [8]
+        self.uib = [20]
                 
         # raccourcis
         self.homeShortcuts = {"?":"prod-index", "index2":"prod-index2", "index":"prod-index", "d":"demo-index", "admin":"prod-index2"}
@@ -33,7 +33,7 @@ class Cfg:
         self.uiba = [1]
         
         self.orgs1 = ["prod", "demo"]
-        self.url1 = "http://localhost:80/cp/$op/"
+        self.url1 = "http://localhost:8000/cp/$op/"
         
     def opsites(self, org): # URL des serveurs op pour chaque organisation
         return self.url1 if org in self.orgs1 else ""

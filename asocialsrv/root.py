@@ -2,14 +2,6 @@ import os, sys, traceback, json, cgi, importlib
 from config import cfg
 from datetime import datetime
 
-epoch0 = datetime(1970, 1, 1)
-
-def epochNow():
-    dt = datetime.utcnow()
-    ms = int(dt.microsecond / 1000)
-    n = int((dt - epoch0).total_seconds()) * 1000
-    return n + ms
-
 class AL:
     def __init__(self, lvl):
         self.level = lvl
@@ -98,7 +90,7 @@ class MimeTypes:
         if code is None:
             return "application/octet-stream"
         return self.types.get(code, "application/octet-stream") if code.find("/") == -1 else code
-    
+  
 mime = MimeTypes()        
 
 class Result:
@@ -106,21 +98,21 @@ class Result:
         self.origin = op.origin if op is not None else None
         self.notFound = notFound
         self.mime = "application/octet-stream"
-        self.encoding = "utf-8"
         self.bytes = u''
+        self.noCache = False
     
     def setOptions(self):
         self.origin = "*"
-        self.bytes = "OK".encode(self.encoding)
+        self.bytes = "OK".encode("utf-8")
         return self
     
-    def setText(self, text, ext="text/plain", encoding="utf-8"):
+    def setText(self, text, ext="text/plain"):
         self.mime = mime.type(ext)
-        self.bytes = text.encode(self.encoding)
+        self.bytes = text.encode("utf-8")
         return self
 
     def setJson(self, dictArg):
-        self.bytes = json.dumps(dictArg).encode(self.encoding)
+        self.bytes = json.dumps(dictArg).encode("utf-8")
         self.mime = "application/json"
         return self
 
@@ -128,10 +120,16 @@ class Result:
         self.mime = mime.type(ext)
         self.bytes = bytesArg
         return self
+    
+    def setNoCache(self):
+        self.noCache = True
+        return self
 
     def headers(self):
         lst = []
-        lst.append(('Content-type', self.mime + "; charset=" + self.encoding)) 
+        if self.noCache:
+            lst.append(("Cache-control", "no-cache, no-store, must-revalidate"))
+        lst.append(('Content-type', self.mime + "; charset=utf-8")) 
         lst.append(('Content-length', str(len(self.bytes))))
         if self.origin is not None:
             lst.append(('Access-Control-Allow-Origin', self.origin))
@@ -171,6 +169,7 @@ class ExecCtx:
     
     def __init__(self, environ, opPath): # opPath : path après /$op/4.7/org/base.InfoOP
         self.error = None
+        self.origin = None
         try:
             self.phase = 1
             self.inputData = {}
@@ -271,7 +270,15 @@ class Url:
         if p == "/$swjs":           # service worker script
             self.type = 1
             return
+
+        if p == "/$sw.html":        # test build courante sw
+            self.type = 6
+            return
         
+        if p == "/$infoSW":           # DEVRAIT être intercepté par le sscript du service worker
+            self.type = 7
+            return
+
         if p.startswith("/$info/"): # info à propos d'une organisation
             self.type = 2
             self.org = p[7:]
@@ -368,6 +375,8 @@ def getSwjs():
     lx = len(dx)
     try:
         lst = []
+        y = "/$ui/" if len(cfg.cp) == 0 else "/" + cfg.cp + "/$ui/"
+        x = y + build +'/'
         for subdir, dirs, files in os.walk(dx):
             for file in files:
                 if subdir.endswith("/"):
@@ -376,10 +385,10 @@ def getSwjs():
                     filepath = (subdir + file)[lx:]
                 else:
                     filepath = (subdir + "/" + file)[lx:]
-                lst.append("x + \"" + filepath + "\"")
+                lst.append("\"" + x + filepath + "\"")
         d1 = "const shortcuts = " + json.dumps(cfg.homeShortcuts) + ";\n"
-        d2 = "const inb = " + str(cfg.inb) + ";\nconst uib = " +  str(cfg.uib) + ";\nconst cp = \"" + cfg.cp + "\";\n;"
-        d3 = "const CP = cp ? '/' + cp + '/' : '/';\nconst CPOP = CP + '$op/';\nconst CPUI = CP + '$ui/';\nconst BC = inb + '.' + uib[0];\nconst x = CPUI + BC +'/';\nconst lres = [\n"
+        d2 = "const inb = " + str(cfg.inb) + ";\nconst uib = " +  str(cfg.uib) + ";\nconst cp = \"" + cfg.cp + "\";\n"
+        d3 = "const CP = cp ? '/' + cp + '/' : '/';\nconst CPOP = CP + '$op/';\nconst CPUI = CP + '$ui/';\nconst BC = inb + '.' + uib[0];\nconst lres = [\n"
         f = open(p, "rb")
         t = f.read().decode("utf-8")
         text = d1 + d2 + d3 + ",\n".join(lst) + "\n];\n" + t
@@ -395,6 +404,18 @@ def getRes(resbuild, resname, ext):
     try:
         f = open(p, "rb")
         return Result().setBytes(f.read(), ext)
+    except Exception as e:
+        raise AppExc("notFound", [p, str(e)])
+
+def getInfoSW():
+    return Result().setJson({"err":"SW not active"})
+
+def getSwHtml():
+    build = str(cfg.inb) + "." + str(cfg.uib[0])
+    p = uiPath(build, "$sw.html")
+    try:
+        f = open(p, "rb")
+        return Result().setBytes(f.read(), "html")
     except Exception as e:
         raise AppExc("notFound", [p, str(e)])
 
@@ -416,8 +437,8 @@ def getHome(url):
         lst = []
         done = False
         base = "<base href=\"/" + cpui + "/" + build + "/\" data-build=\"" + build + "\" data-maker=\"WebUI-" + url.stamp.toString() + "\">"
-        al.error("tag base : " + base)
-        with open(p, "r") as ins:
+        al.info("tag base : " + base)
+        with open(p, "r", encoding='utf-8') as ins:
             for line in ins:
                 if done:
                     lst.append(line)
@@ -428,8 +449,9 @@ def getHome(url):
                         done = True
                     else:
                         lst.append(line)
-        return Result().setText("".join(lst), "html")
-    except:
+        return Result().setText("".join(lst), "html").setNoCache()
+    except Exception as e:
+        al.warn(str(e) + traceback.format_exc())
         raise AppExc("home", [url.home, build, p], url.lang)
 
 dics.set("fr", "bonjour", "Bonjour {0} {1} !")
@@ -469,7 +491,7 @@ def application(environ, start_response):
 
     try:
         url = Url(environ)
-        url.stamp = Stamp(epochNow())
+        url.stamp = Stamp.fromEpoch(Stamp.epochNow())
         if url.type == 1:
             return getSwjs()
         if url.type == 2:
@@ -480,6 +502,10 @@ def application(environ, start_response):
             return getRes(url.resbuild, url.resname, url.ext)
         if url.type == 5:
             return ExecCtx(environ, url.opPath).go()
+        if url.type == 6:
+            return getSwHtml()
+        if url.type == 7:
+            return getInfoSW()
         raise AppExc("rni", environ["PATH_INFO"])
     except AppExc as e:
         al.warn(e.msg)
@@ -491,8 +517,11 @@ def application(environ, start_response):
 al.level = cfg.loglevel
 
 class Stamp:
+    epoch0 = datetime(1970, 1, 1)
     _minEpoch = 946684800000
     _maxEpoch = 4102444799999
+    _minStamp = 101000000000
+    _maxStamp = 99123123595959999
     _nbj = [[0,31,28,31,30,31,30,31,31,30,31,30,31], [0,31,29,31,30,31,30,31,31,30,31,30,31]]
     _nbjc = [[0,0,0,0,0,0,0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0,0,0,0,0,0,0]]
     i = 0
@@ -511,6 +540,13 @@ class Stamp:
     # nb jours 2000-01-01 - 1970-01-01 - 30 années dont 7 bissextiles - C'était un Samedi
     _nbj00 = (365 * 30) + 7
     _wd00 = 5
+    _nbms00 = _minEpoch % 86400000
+    
+    def epochNow():
+        dt = datetime.utcnow()
+        ms = int(dt.microsecond / 1000)
+        n = int((dt - Stamp.epoch0).total_seconds()) * 1000
+        return n + ms
     
     def nbj(yy, mm):
         return Stamp._nbj[1 if yy % 4 == 0 else 0][mm]
@@ -519,105 +555,144 @@ class Stamp:
         x = Stamp._nbj[1 if yy % 4 == 0 else 0][mm]
         return x if jj > x else jj
     
-    def __init__(self, epoch):
+    def __init__(self):
+        self.yy = 0
+        self.MM = 1
+        self.dd = 1
+        self.HH = 0
+        self.mm = 0
+        self.ss = 0
+        self.ms = 0
+        self.time = 0
+        self.date = 101
+        self.stamp = Stamp._minStamp
+        self.epoch = Stamp._minEpoch
+        self.wd = 5
+        self.nbd00 = 0
+        self.epoch00 = 0
+        self.nbms = Stamp._nbms00 
+        
+    def fromEpoch(epoch):
         if epoch < Stamp._minEpoch:
             epoch = Stamp._minEpoch
-        if epoch <= Stamp._maxEpoch:
-            self.epoch = epoch
-            self.nbd00 = (epoch // 86400000) - Stamp._nbj00
-            self.wd = ((self.nbd00 + Stamp._wd00) % 7) + 1
-            self.nbms = epoch % 86400000
-            self.epoch00 = (self.nbd00 * 86400000) + self.nbms
-            self.yy = (self.nbd00 // Stamp._qa) * 4
-            x1 = self.nbd00 % Stamp._qa
-            na = 0
-            while True:
-                nbjcx = Stamp._nbjc[1 if self.yy % 4 == 0 else 0]
-                if x1 < Stamp._nbjq[na + 1]:
-                    nj = x1 - Stamp._nbjq[na]
-                    self.MM = 1
-                    while True:
-                        if nj < nbjcx[self.MM+1]:
-                            self.dd = nj - nbjcx[self.MM] + 1
-                            break                      
-                        self.MM += 1
-                    break
-                self.yy += 1
-                na += 1
-            self.date = self.dd + (self.MM * 100) + (self.yy * 10000)
-            self.HH = self.nbms // 3600000
-            x = self.nbms % 3600000
-            self.mm = x // 60000
-            x = self.nbms % 60000
-            self.ss = x // 1000
-            self.SSS = x % 1000
-            self.time = self.SSS + (self.ss * 1000) + (self.mm * 100000) + (self.HH * 10000000)
-            self.stamp = (self.date * 1000000000) + self.time
-        else:
-            if epoch > 20991231235959999:
-                epoch =  20991231235959999
-            self.SSS = epoch % 1000
-            x = epoch // 1000
-            self.ss = x % 100
-            x = x // 100
-            self.mm = x % 100
-            x = x // 100
-            self.HH = x % 100
-            x = x // 100
-            self.dd = x % 100
-            x = x // 100
-            self.MM = x % 100
-            x = x // 100
-            self.yy = x % 100
-            if self.yy < 0:
-                self.yy = 0
-            if self.yy > 99: 
-                self.yy = 99
-            if self.MM < 1: 
-                self.MM = 1
-            if self.MM > 12:
-                self.MM = 12
-            self.dd =  1 if self.dd < 1 else Stamp.truncJJ(self.yy, self.MM, self.dd)
-            if self.HH < 0:
-                self.HH = 0
-            if self.mm < 0:
-                self.mm = 0
-            if self.ss < 0:
-                self.ss = 0
-            if self.SSS < 0:
-                self.SSS = 0
-            if self.HH > 23:
-                self.HH = 23
-            if self.mm > 59:
-                self.mm = 59
-            if self.ss > 59:
-                self.ss = 59
-            if self.SSS > 999:
-                self.SSS = 999
-            self.time = self.SSS + (self.ss * 1000) + (self.mm * 100000) + (self.HH * 10000000)
-            self.date = self.dd + (self.MM * 100) + (self.yy * 10000)
-            self.stamp = (self.date * 1000000000) + self.time
-            self.q = Stamp._nbjc[1 if self.yy % 4 == 0 else 0][self.MM] + self.dd
-            self.nbd00 = ((self.yy // 4) * Stamp._qa) + Stamp._nbjq[(self.yy % 4)] + self.q - 1
-            self.nbms = self.SSS + (self.ss * 1000) + (self.mm * 60000) + (self.HH * 3600000)
-            self.epoch00 = (self.nbd00 * 86400000) + self.nbms
-            self.epoch = ((self.nbd00 + Stamp._nbj00) * 86400000) + self.nbms
-            self.wd = ((self.nbd00 + Stamp._wd00) % 7) + 1
+        if epoch > Stamp._maxEpoch:
+            epoch = Stamp._maxEpoch
+        myself = Stamp()
+        myself.epoch = epoch
+        myself.nbd00 = (epoch // 86400000) - Stamp._nbj00
+        myself.wd = ((myself.nbd00 + Stamp._wd00) % 7) + 1
+        myself.nbms = epoch % 86400000
+        myself.epoch00 = (myself.nbd00 * 86400000) + myself.nbms
+        myself.yy = (myself.nbd00 // Stamp._qa) * 4
+        x1 = myself.nbd00 % Stamp._qa
+        na = 0
+        while True:
+            nbjcx = Stamp._nbjc[1 if myself.yy % 4 == 0 else 0]
+            if x1 < Stamp._nbjq[na + 1]:
+                nj = x1 - Stamp._nbjq[na]
+                myself.MM = 1
+                while True:
+                    if nj < nbjcx[myself.MM+1]:
+                        myself.dd = nj - nbjcx[myself.MM] + 1
+                        break                      
+                    myself.MM += 1
+                break
+            myself.yy += 1
+            na += 1
+        myself.date = myself.dd + (myself.MM * 100) + (myself.yy * 10000)
+        myself.HH = myself.nbms // 3600000
+        x = myself.nbms % 3600000
+        myself.mm = x // 60000
+        x = myself.nbms % 60000
+        myself.ss = x // 1000
+        myself.SSS = x % 1000
+        myself.time = myself.SSS + (myself.ss * 1000) + (myself.mm * 100000) + (myself.HH * 10000000)
+        myself.stamp = (myself.date * 1000000000) + myself.time
+        return myself
+            
+    def fromStamp(stamp):        
+        if stamp > Stamp._maxStamp:
+            stamp = Stamp._maxStamp
+        if stamp < Stamp._minStamp:
+            stamp = Stamp._minStamp
+        myself = Stamp()
+        myself.SSS = stamp % 1000
+        x = stamp // 1000
+        myself.ss = x % 100
+        x = x // 100
+        myself.mm = x % 100
+        x = x // 100
+        myself.HH = x % 100
+        x = x // 100
+        myself.dd = x % 100
+        x = x // 100
+        myself.MM = x % 100
+        x = x // 100
+        myself.yy = x % 100
+        return myself.normalize()
+            
+    def fromDateUTC(yy, MM, dd, hh=0, mm=0, ss=0, SSS=0):
+        myself = Stamp()
+        myself.yy = yy
+        myself.MM = MM
+        myself.dd = dd
+        myself.hh = hh
+        myself.mm = mm
+        myself.ss = ss
+        myself.SSS = SSS
+        return myself.normalize()
+        
+    def normalize(self):
+        if self.yy < 0:
+            self.yy = 0
+        if self.yy > 99: 
+            self.yy = 99
+        if self.MM < 1: 
+            self.MM = 1
+        if self.MM > 12:
+            self.MM = 12
+        self.dd =  1 if self.dd < 1 else Stamp.truncJJ(self.yy, self.MM, self.dd)
+        if self.HH < 0:
+            self.HH = 0
+        if self.mm < 0:
+            self.mm = 0
+        if self.ss < 0:
+            self.ss = 0
+        if self.SSS < 0:
+            self.SSS = 0
+        if self.HH > 23:
+            self.HH = 23
+        if self.mm > 59:
+            self.mm = 59
+        if self.ss > 59:
+            self.ss = 59
+        if self.SSS > 999:
+            self.SSS = 999
+        self.time = self.SSS + (self.ss * 1000) + (self.mm * 100000) + (self.HH * 10000000)
+        self.date = self.dd + (self.MM * 100) + (self.yy * 10000)
+        self.stamp = (self.date * 1000000000) + self.time
+        self.q = Stamp._nbjc[1 if self.yy % 4 == 0 else 0][self.MM] + self.dd
+        self.nbd00 = ((self.yy // 4) * Stamp._qa) + Stamp._nbjq[(self.yy % 4)] + self.q - 1
+        self.nbms = self.SSS + (self.ss * 1000) + (self.mm * 60000) + (self.HH * 3600000)
+        self.epoch00 = (self.nbd00 * 86400000) + self.nbms
+        self.epoch = ((self.nbd00 + Stamp._nbj00) * 86400000) + self.nbms
+        self.wd = ((self.nbd00 + Stamp._wd00) % 7) + 1
+        return self
     
     def toString(self):
         s = str(self.stamp)
-        return "0" + s if len(s) < 15 else s
+        return "0000000"[0:15 - len(s)] + s
 
     def test():
-        l1 = epochNow()
-        st = Stamp(l1)
+        l1 = Stamp.epochNow()
+        st = Stamp.fromEpoch(l1)
         l2 = st.epoch
         l3 = st.stamp
-        st2 = Stamp(l2)
+        st2 = Stamp.fromStamp(l2)
         l2b = st2.epoch
         l2c = st2.stamp
-        st3 = Stamp(l3)
+        st3 = Stamp.fromStamp(l3)
         l3b = st3.epoch
         l3c = st3.stamp
 
-Stamp.test()
+# Stamp.test()
