@@ -14,7 +14,7 @@ class Cfg:
         self.inb = 1
         
         # builds UI servies, la première est l'officielle (une seule obligatoire)
-        self.uib = [20]
+        self.uib = [1]
                 
         # raccourcis
         self.homeShortcuts = {"?":"prod-index", "index2":"prod-index2", "index":"prod-index", "d":"demo-index", "admin":"prod-index2"}
