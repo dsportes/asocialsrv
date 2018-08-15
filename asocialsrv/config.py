@@ -29,8 +29,11 @@ class Cfg:
         
         self.origins = ["http://localhost", "http://localhost:8000"]
         
+        # versions supportées du serveur de traitement
         self.opb = [1]
-        self.uiba = [1]
+        
+        # applications acceptées et leurs contraintes de build (minimale et non boguées)
+        self.uiba = {"A":[1], "B":[3, 7, 8]}
         
         self.orgs1 = ["prod", "demo"]
         self.url1 = "http://localhost:8000/cp/$op/"

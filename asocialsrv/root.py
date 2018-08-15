@@ -1,6 +1,8 @@
 import os, sys, traceback, json, cgi, importlib
 from config import cfg
 from datetime import datetime
+from threading import Lock
+from settings import settings
 
 class AL:
     def __init__(self, lvl):
@@ -96,6 +98,7 @@ mime = MimeTypes()
 class Result:
     def __init__(self, op=None, notFound=False):    # op : Operation OU ExecCtc
         self.origin = op.origin if op is not None else None
+        self.respXCH = op.respXCH if op is not None else None
         self.notFound = notFound
         self.mime = "application/octet-stream"
         self.bytes = u''
@@ -133,6 +136,8 @@ class Result:
         lst.append(('Content-length', str(len(self.bytes))))
         if self.origin is not None:
             lst.append(('Access-Control-Allow-Origin', self.origin))
+        if self.respXCH is not None:
+            lst.append(('X-Custom-Header', json.dumps(self.respXCH)))
         lst.append(('Access-Control-Allow-Headers', 'X-Custom-Header'))
         return lst
 
@@ -145,54 +150,88 @@ class Operation:
         self.origin = execCtx.origin
         self.param = execCtx.param
         self.inputData = execCtx.inputData
+        self.org = execCtx.org
         self.opName = execCtx.opName
+        self.reqXCH = execCtx.reqXCH
+        self.respXCH = None
+        self.stamp = Stamp.fromEpoch(Stamp.epochNow())
+        self.provider = None
+        self.provider = ExecCtx.getClass(settings.dbProvider[0], settings.dbProvider[1])(self)
+        self.checkOnOff()
     
     def work(self):
         return Result(200, self).setJson({'operation':self.operation})
+    
+    def checkOnOff(self):
+        z, y = self.provider.onoff()
+        st = 1 if z['ison'] > 0 and y['ison'] > 0 else 0
+        self.respXCH = {"inb":cfg.inb, 'uiba':self.execCtx.uiba, 'onoff':st, 'infoGen':z['info'], 'infoOrg':y['info']}
+        if self.opName == 'base.InfoOP':
+            return
+        if z['onoff'] != 1:
+            raise AppExc("OFF2")
+        if y['onoff'] != 1:
+            raise AppExc("OFF3")
+    
+    def close(self):
+        if self.provider is not None:
+            self.provider.close()
 
 class ExecCtx:
     modules = {}
+    modLock = Lock()
     
     def getClass(mod, cl):  # self.operation = getattr(module, cl)(self)
-        e = ExecCtx.modules.get(mod, None)
-        if e is None:
-            module = importlib.import_module(mod)
-            e = {'module':module, 'classes':{}}
-            ExecCtx.modules[mod] = e
-        else:
-            module = e['module']
-        c = e['classes'].get(cl, None)
-        if c is None:
-            c = getattr(module, cl)
-            e['classes'][cl] = c
-        return c        
+        with ExecCtx.modLock:
+            e = ExecCtx.modules.get(mod, None)
+            if e is None:
+                module = importlib.import_module(mod)
+                e = {'module':module, 'classes':{}}
+                ExecCtx.modules[mod] = e
+            else:
+                module = e['module']
+            c = e['classes'].get(cl, None)
+            if c is None:
+                c = getattr(module, cl)
+                e['classes'][cl] = c
+            return c        
     
     def __init__(self, environ, opPath): # opPath : path après /$op/4.7/org/base.InfoOP
         self.error = None
         self.origin = None
-        try:
-            self.phase = 1
-            self.inputData = {}
-            self.param = {}            
-            environ.setdefault('QUERY_STRING', '')
+        self.app = None
+        self.respXCH = None
+        self.reqXCH = None
+        self.operation = None
+        self.borig = ""
+        self.phase = 1
+        self.inputData = {}
+        self.param = {}
+        self.uiba = None    
+        self.org = None    
 
+        try:
+            environ.setdefault('QUERY_STRING', '')
             xch = environ.get("HTTP_X_CUSTOM_HEADER", None)
             if xch is None:
                 raise AppExc("SECORIG1")
             try:
-                self.xch = json.loads(xch)
+                self.reqXCH = json.loads(xch)
             except:
-                self.xch = None
-            if self.xch is None:
+                self.reqXCH = None
+            if self.reqXCH is None:
                 raise AppExc("SECORIG1")
-            self.origin = self.xch.get("origin", "?")
+            self.origin = self.reqXCH.get("origin", "?")
             if self.origin not in cfg.origins:
                 raise AppExc("SECORIG2", [self.origin])
-            
-            majeur = self.xch.get("inb", 0)
-            mineur = self.xch.get("uib", 0)
+            self.app = self.reqXCH.get('app', None)
+            self.uiba = cfg.uiba.get(self.app, None)
+            if self.uiba is None:
+                raise AppExc("OFF0")
+            majeur = self.reqXCH.get("inb", 0)
+            mineur = self.reqXCH.get("uib", 0)
             borig = str(majeur) + "." + str(mineur)
-            if majeur != cfg.inb or mineur < cfg.opb[0] or mineur in cfg.opb[1:]:
+            if majeur != cfg.inb or mineur < self.uiba[0] or mineur in self.uiba[1:]:
                 raise AppExc("DBUILD", [borig])
             
             form = cgi.FieldStorage(fp=environ['wsgi.input'], environ=environ, keep_blank_values=1)
@@ -220,9 +259,8 @@ class ExecCtx:
             mod = "base" if i == -1 else self.opName[:i]
             cl = self.opName if i == -1 else self.opName[i+1:]
             try:
-                c = ExecCtx.getClass(mod, cl)
-                self.operation = c(self)
-            except:
+                self.operationClass = ExecCtx.getClass(mod, cl)
+            except Exception as e:
                 raise AppExc("BOPNAME", [self.opName])
                 
         except AppExc as ex:
@@ -241,8 +279,14 @@ class ExecCtx:
         n = 0
         while True:
             try:
-                return self.operation.work()
+                self.phase = 1
+                self.operation = self.operationClass(self)
+                result = self.operation.work()
+                self.operation.close()
+                return result
             except AppExc as ex:
+                if self.operation is not None:
+                    self.operation.close()
                 if n == 2 or not ex.toRetry:
                     err = {'err':ex.err, 'info':ex.msg, 'args':ex.args, 'phase':self.phase, 'tb':traceback.format_exc()}
                     al.warn(err)
@@ -250,10 +294,12 @@ class ExecCtx:
                 else:
                     n += 1
             except:
+                if self.operation is not None:
+                    self.operation.close()
                 exctype, value = sys.exc_info()[:2]
                 err = {'err':'U', 'info':str(exctype) + ' - ' + str(value), 'phase':self.phase, 'tb':traceback.format_exc()}
                 al.error(err)
-                return Result(self).setJson(err)
+                return Result(self).setJson(err)                
 
 def homeShortcut(sc = None):
     return cfg.homeShortcuts["?"] if sc is None else cfg.homeShortcuts.get(sc, None)
@@ -474,6 +520,8 @@ dics.set("fr", "home", "La page d'accueil [{0}] pour la build [{1}] (path:[{2}])
 dics.set("fr", "majeur", "La ou les builds déployées sont {0}.x : une {1}.x a été demandée")
 dics.set("fr", "mineur", "La ou les builds déployées sont {0}.{1} : {2} a été demandée")
 dics.set("fr", "org", "L'organisation {0} n'est pas hébergée")
+
+dics.set("fr", "XSQLCNX", "Incident de connexion à la base de données. Opération:{0} Org:{1} Cause:{2}")
 
 if cfg.mode == 2:   # mettre dans le path le répertoire qui héberge la build courante du serveur OP
     pyp = os.path.dirname(__file__)

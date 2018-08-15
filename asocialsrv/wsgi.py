@@ -15,13 +15,13 @@ def application(environ, start_response):
     try:
         start_response(result.status(), result.headers())
         return [result.bytes]
-    except:
-        print("Déconnexion 1", file=sys.stderr)
+    except Exception as e:
+        print("Déconnexion 1 : " + str(e), file=sys.stderr)
 
 httpd = make_server('localhost', 8000, application)
 print("Local server listening 8000 ...", file=sys.stderr)
 try:
     httpd.serve_forever()
-except:
-    print("Déconnexion 2", file=sys.stderr)
+except Exception as e:
+    print("Déconnexion 2 : " + str(e), file=sys.stderr)
 
