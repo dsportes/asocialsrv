@@ -5,8 +5,8 @@ from threading import Lock
 from settings import settings
 
 class AL:
-    def __init__(self, lvl):
-        self.level = lvl
+    def __init__(self):
+        self.level = cfg.loglevel
     def setInfo(self):
         self.level = 0
     def setWarn(self):
@@ -21,7 +21,7 @@ class AL:
             print(text, file=sys.stderr)
     def error(self, text):
         print(text, file=sys.stderr)
-al = AL(1)
+al = AL()
 
 class Dic: #
     def __init__(self):
@@ -158,7 +158,8 @@ class Operation:
         self.provider = None
         self.provider = ExecCtx.getClass(settings.dbProvider[0], settings.dbProvider[1])(self)
         self.checkOnOff()
-    
+        al.warn("Operation ==> " + self.opName + " " + self.stamp.toString())
+
     def work(self):
         return Result(200, self).setJson({'operation':self.operation})
     
@@ -539,7 +540,7 @@ def application(environ, start_response):
     method = environ.get("REQUEST_METHOD", "")
     if method == "" or method == "OPTIONS":
         al.info("OPTIONS : " + environ["PATH_INFO"])
-        return Result().setOptions()     # c'est une OPTIONS ?
+        return Result().setOptions()     # c'est une OPTIONS : origin = "*"
 
     try:
         url = Url(environ)
@@ -566,9 +567,7 @@ def application(environ, start_response):
         exctype, value = sys.exc_info()[:2]
         err = {'err':'BU3', 'info':str(exctype) + ' - ' + str(value), 'phase':0, 'tb':traceback.format_exc()}
         al.error(err)
-        return Result(self).setJson(err)                
-    
-al.level = cfg.loglevel
+        return Result(self).setJson(err)
 
 class Stamp:
     epoch0 = datetime(1970, 1, 1)
