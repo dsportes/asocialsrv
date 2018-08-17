@@ -1,10 +1,12 @@
 ############## Classe Configuration
 class Cfg:
     def __init__(self):
+        useBuild = False
+        
         # Log level
         self.loglevel = 1
         
-        # context-path
+        # context-path : sert au magasin UI pour générer le $sw.js et les pages d'accueil
         self.cp = "cp"
         
         # mode : 1:UI seul 2:UI+OP[0.0] 3:OP[4.7] seul
@@ -24,10 +26,12 @@ class Cfg:
         self.langs = [self.lang, "en"]
         
         # path sur le file-system des ressources ui (AVEC / à la fin : il y a une build derrière, SANS il n'y PAS de build )
-        self.uipath = "/home/daniel/git/asocialui/asocialui"    # dans environnement de test
-        #self.uipath = "/home/daniel/git/asocialui/asocialui/build/"
+        if useBuild:
+            self.uipath = "/home/daniel/git/asocialui/asocialui/build/"
+        else:
+            self.uipath = "/home/daniel/git/asocialui/asocialui"    # dans environnement de test            
         
-        self.origins = ["http://localhost", "http://localhost:8000"]
+        self.origins = ["http://localhost", "http://localhost:8000", "http://localhost:8081"]
         
         # versions supportées du serveur de traitement
         self.opb = [1]

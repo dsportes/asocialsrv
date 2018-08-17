@@ -323,7 +323,7 @@ class Url:
             self.type = 6
             return
         
-        if p == "/$infoSW":           # DEVRAIT être intercepté par le sscript du service worker
+        if p == "/$infoSW":         # DEVRAIT être intercepté par le sscript du service worker
             self.type = 7
             return
 
@@ -332,9 +332,17 @@ class Url:
             self.org = p[7:]
             return
 
-        if p.startswith("/$ui/"):   # Accès à une ressource UI /$ui/4.10/...ext
-            self.type = 4
+        if p.startswith("/$op/"):   # Appel d'une opération /$op/4.7/mod.Op/org/a/b
+            self.type = 5
             x = p[6:]
+            i = x.find("/")
+            self.opPath = "" if i == -1 else x[i + 1:]  # mod.Op/org/a/b
+            return
+
+        i = p.find("$ui/")
+        if i != -1:                 # Accès à une ressource UI /$ui/4.10/...ext
+            self.type = 4
+            x = p[i + 4:]
             i = x.find("/")
             if i == -1:
                 self.resbuild = x
@@ -345,14 +353,7 @@ class Url:
             i = self.resname.rfind(".")
             self.ext = "" if i == -1 else self.resname[i + 1:]
             return
-        
-        if p.startswith("/$op/"):   # Appel d'une opération /$op/4.7/mod.Op/org/a/b
-            self.type = 5
-            x = p[6:]
-            i = x.find("/")
-            self.opPath = "" if i == -1 else x[i + 1:]  # mod.Op/org/a/b
-            return
-        
+                
         # c'est une page d'accueil
         self.type = 3
         self.mode = 1
@@ -370,7 +371,7 @@ class Url:
             self.ext = p[i + 1:]
             if self.ext.startswith("a"):
                 self.mode = 2
-            if self.ext.startswith("i"):
+            if self.ext.startswith("i") or self.ext == "html":
                 self.mode = 0
 
         orgHome = p if len(self.ext) == 0 else p[:len(p) - len(self.ext) - 1]
@@ -484,7 +485,8 @@ def getHome(url):
     try:
         lst = []
         done = False
-        base = "<base href=\"/" + cpui + "/" + build + "/\" data-build=\"" + build + "\" data-maker=\"WebUI-" + url.stamp.toString() + "\">"
+        href = "/" + cpui + "/" + build + "/"
+        base = "<base href=\"" + href + "\" data-build=\"" + build + "\" data-maker=\"WebUI-" + url.stamp.toString() + "\">\n"
         al.info("tag base : " + base)
         with open(p, "r", encoding='utf-8') as ins:
             for line in ins:
