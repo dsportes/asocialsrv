@@ -168,9 +168,9 @@ class Operation:
         self.respXCH = {"inb":cfg.inb, 'uiba':self.execCtx.uiba, 'onoff':st, 'infoGen':z['info'], 'infoOrg':y['info']}
         if self.opName == 'base.InfoOP':
             return
-        if z['onoff'] != 1:
+        if z['ison'] != 1:
             raise AppExc("OFF2")
-        if y['onoff'] != 1:
+        if y['ison'] != 1:
             raise AppExc("OFF3")
     
     def close(self):
@@ -230,9 +230,11 @@ class ExecCtx:
                 raise AppExc("OFF0")
             majeur = self.reqXCH.get("inb", 0)
             mineur = self.reqXCH.get("uib", 0)
-            borig = str(majeur) + "." + str(mineur)
             if majeur != cfg.inb or mineur < self.uiba[0] or mineur in self.uiba[1:]:
-                raise AppExc("DBUILD", [borig])
+                xx = [cfg.inb, cfg.opb[0]]
+                for y in self.uiba:
+                    xx.append(y)
+                raise AppExc("DBUILD", xx)
             
             form = cgi.FieldStorage(fp=environ['wsgi.input'], environ=environ, keep_blank_values=1)
             for x in form:
@@ -269,7 +271,7 @@ class ExecCtx:
             self.error = Result(self).setJson(err)
         except Exception as e:
             exctype, value = sys.exc_info()[:2]
-            err = {'err':'U', 'info':str(exctype) + ' - ' + str(value), 'phase':self.phase, 'tb':traceback.format_exc()}
+            err = {'err':'BU1', 'info':str(exctype) + ' - ' + str(value), 'phase':self.phase, 'tb':traceback.format_exc()}
             al.error(err)
             self.error = Result(self).setJson(err)
         
@@ -293,11 +295,11 @@ class ExecCtx:
                     return Result(self).setJson(err)
                 else:
                     n += 1
-            except:
+            except Exception as e:
                 if self.operation is not None:
                     self.operation.close()
                 exctype, value = sys.exc_info()[:2]
-                err = {'err':'U', 'info':str(exctype) + ' - ' + str(value), 'phase':self.phase, 'tb':traceback.format_exc()}
+                err = {'err':'BU2', 'info':str(exctype) + ' - ' + str(value), 'phase':self.phase, 'tb':traceback.format_exc()}
                 al.error(err)
                 return Result(self).setJson(err)                
 
@@ -510,7 +512,7 @@ dics.set("fr", "BOPNAME", "opération inconnue : [{0}]")
 dics.set("fr", "BOPINIT", "opération non instantiable : [{0}]")
 dics.set("fr", "SECORIG1", "opération rejetée car provenant d'une origine inconnue")
 dics.set("fr", "SECORIG2", "opération rejetée car provenant d'une origine non acceptée : [{0}]")
-dics.set("fr", "DBUILD", "la version de l'application graphique [{0}] n'est pas acceptée par le serveur des opérations")
+dics.set("fr", "DBUILD", "la version de l'application graphique n'est pas acceptée par le serveur des opérations")
 
 dics.set("fr", "rni", "Requête non identifiée [{0}]")
 dics.set("fr", "notFound", "Ressource non trouvée / lisible [{0}]. Cause : {1}")
@@ -559,8 +561,10 @@ def application(environ, start_response):
         al.warn(e.msg)
         return Result(None, e.err == "notFound").setText(str(e.msg))
     except Exception as e:
-        traceback.print_exc()
-        return Result().setText(str(e) + traceback.format_exc())
+        exctype, value = sys.exc_info()[:2]
+        err = {'err':'BU3', 'info':str(exctype) + ' - ' + str(value), 'phase':0, 'tb':traceback.format_exc()}
+        al.error(err)
+        return Result(self).setJson(err)                
     
 al.level = cfg.loglevel
 
