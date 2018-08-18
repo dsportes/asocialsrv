@@ -11,5 +11,8 @@ from root import application as app
 
 def application(environ, start_response):
     result = app(environ, start_response)
-    start_response(result.status(), result.headers())
-    return [result.bytes]
+    try:
+        start_response(result.status(), result.headers())
+        return [result.bytes]
+    except Exception as e:
+        print("Déconnexion 1 : " + str(e), file=sys.stderr)

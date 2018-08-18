@@ -1,7 +1,7 @@
 ############## Classe Configuration
 class Cfg:
     def __init__(self):
-        useBuild = False
+        self.useBuild = False # utile seulement en Magasin d'App
         
         # Log level
         self.loglevel = 1
@@ -26,12 +26,12 @@ class Cfg:
         self.langs = [self.lang, "en"]
         
         # path sur le file-system des ressources ui (AVEC / à la fin : il y a une build derrière, SANS il n'y PAS de build )
-        if useBuild:
+        if self.useBuild:
             self.uipath = "/home/daniel/git/asocialui/asocialui/build/"
         else:
             self.uipath = "/home/daniel/git/asocialui/asocialui"    # dans environnement de test            
         
-        self.origins = ["http://localhost", "http://localhost:8000", "http://localhost:8081"]
+        self.origins = ["http://localhost", "http://localhost:8000", "http://localhost:8081", "https://test.sportes.fr"]
         
         # versions supportées du serveur de traitement
         self.opb = [1]
@@ -41,6 +41,7 @@ class Cfg:
         
         self.orgs1 = ["prod", "demo"]
         self.url1 = "http://localhost:8000/cp/$op/"
+        #self.url1 = "https://test.sportes.fr/cp/$op/"
         
     def opsites(self, org): # URL des serveurs op pour chaque organisation
         return self.url1 if org in self.orgs1 else ""

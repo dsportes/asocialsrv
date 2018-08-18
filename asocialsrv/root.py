@@ -2,7 +2,6 @@ import os, sys, traceback, json, cgi, importlib
 from config import cfg
 from datetime import datetime
 from threading import Lock
-from settings import settings
 
 class AL:
     def __init__(self):
@@ -101,12 +100,13 @@ class Result:
         self.respXCH = op.respXCH if op is not None else None
         self.notFound = notFound
         self.mime = "application/octet-stream"
-        self.bytes = u''
+        self.bytes = None
         self.noCache = False
     
-    def setOptions(self):
+    def setOptions(self, reqOrigin):
         self.origin = "*"
-        self.bytes = "OK".encode("utf-8")
+        self.bytes = b''
+        self.origin = reqOrigin
         return self
     
     def setText(self, text, ext="text/plain"):
@@ -238,20 +238,21 @@ class ExecCtx:
                 raise AppExc("DBUILD", xx)
             
             form = cgi.FieldStorage(fp=environ['wsgi.input'], environ=environ, keep_blank_values=1)
-            for x in form:
-                f = form[x]
-                filename = f.filename
-                if filename:
-                    self.inputData[x] ={'name':x, 'type':f.type,'filename':filename, 'val':f.file.read()}
-                else:
-                    v = f.value
-                    if x == "param":
-                        try:
-                            self.param = json.loads(v)
-                        except Exception as e:
-                            raise AppExc("BPARAMJSON", [e.msg])
+            if form.list is not None:
+                for x in form:
+                    f = form[x]
+                    filename = f.filename
+                    if filename:
+                        self.inputData[x] ={'name':x, 'type':f.type,'filename':filename, 'val':f.file.read()}
                     else:
-                        self.inputData[x] ={'name':x, 'val':v}
+                        v = f.value
+                        if x == "param":
+                            try:
+                                self.param = json.loads(v)
+                            except Exception as e:
+                                raise AppExc("BPARAMJSON", [e.msg])
+                        else:
+                            self.inputData[x] ={'name':x, 'val':v}
 
             i = opPath.find("/") # mod.Op/org/a/b...
             u = "" if i == -1 else opPath[i+1:]
@@ -310,11 +311,16 @@ def homeShortcut(sc = None):
 class Url:
     def __init__(self, environ):
         p = environ["PATH_INFO"]    # /cp/prod-home
+        self.pathInfo = p
         self.cp = cfg.cp
         l = len(self.cp)
         if l != 0 and p.startswith("/" + self.cp + "/"):
             p = p[l + 1:]
         al.info(p)
+
+        if p == "/$ping":           # service worker script
+            self.type = 8
+            return
 
         if p == "/$swjs":           # service worker script
             self.type = 1
@@ -343,14 +349,15 @@ class Url:
         i = p.find("$ui/")
         if i != -1:                 # Accès à une ressource UI /$ui/4.10/...ext
             self.type = 4
-            x = p[i + 4:]
-            i = x.find("/")
-            if i == -1:
-                self.resbuild = x
+            j = p.find("/", i + 4)
+            if j == -1:
+                self.resbuild = p[i + 4:]
                 self.resname = ""
+                self.prefix = p[:i + 4]
             else:
-                self.resbuild = x[:i]
-                self.resname = x[i + 1:]
+                self.resbuild = p[i + 4:j]
+                self.resname = p[j + 1:]
+                self.prefix = p[:j]
             i = self.resname.rfind(".")
             self.ext = "" if i == -1 else self.resname[i + 1:]
             return
@@ -446,16 +453,45 @@ def getSwjs():
     except Exception as e:
         raise AppExc("swjs", [p, str(e)])
 
+def ping():
+    stamp = Stamp.fromEpoch(Stamp.epochNow())
+    return Result().setText(stamp.toString())
+
 def info(org):
     return Result().setJson({"inb":cfg.inb, "uib":cfg.uib, "opsite":cfg.opsites(org)})
 
-def getRes(resbuild, resname, ext):
+def getRes(url):
+    resname = url.resname
+    resbuild = url.resbuild
+    ext = url.ext
     p = uiPath(resbuild, resname)
     try:
-        f = open(p, "rb")
-        return Result().setBytes(f.read(), ext)
+        if cfg.useBuild or ext != "js":
+            with open(p, "rb") as f:
+                return Result().setBytes(f.read(), ext)
+        else:
+            return patchPolymer(p, url.prefix)  
     except Exception as e:
         raise AppExc("notFound", [p, str(e)])
+
+def patchPolymer(p, pfx):   # NIQUER Polymer. Comme polymer serve !
+    with open(p, "r", encoding='utf-8') as ins:
+        l = []
+        for line in ins:
+            if (not "import" in line) or ("node_modules" in line):
+                l.append(line)
+                continue
+            if "@polymer" in line:
+                j = line.find("@polymer")
+                mod =  line[:j] + pfx + "/node_modules/" + line[j:]
+                l.append(mod)
+            elif "@webcomponents" in line:
+                k = line.find("@webcomponents")
+                mod =  line[:k] + pfx + "/node_modules/" + line[k:]
+                l.append(mod)     
+            else:
+                l.append(line)       
+        return Result().setText("\n".join(l), "js")
 
 def getInfoSW():
     return Result().setJson({"err":"SW not active"})
@@ -531,20 +567,21 @@ dics.set("fr", "XSQLCNX", "Incident de connexion à la base de données. Opérat
 if cfg.mode == 2:   # mettre dans le path le répertoire qui héberge la build courante du serveur OP
     pyp = os.path.dirname(__file__)
     sys.path.insert(0, pyp + "/" + str(cfg.inb) + "." + str(cfg.opb[0]))
-    # module = importlib.import_module("base")
-    # print("base")
-    # for x in sys.path:
-    #      print(x)
+
+from settings import settings
 
 def application(environ, start_response):
     method = environ.get("REQUEST_METHOD", "")
     if method == "" or method == "OPTIONS":
-        al.info("OPTIONS : " + environ["PATH_INFO"])
-        return Result().setOptions()     # c'est une OPTIONS : origin = "*"
+        reqOrigin = environ.get("HTTP_ORIGIN", "?")
+        al.warn("OPTIONS : " + environ["PATH_INFO"] + " " + reqOrigin)
+        return Result().setOptions(reqOrigin)     # c'est une OPTIONS : origin = "*"
 
     try:
         url = Url(environ)
         url.stamp = Stamp.fromEpoch(Stamp.epochNow())
+        if url.type == 8:
+            return ping()
         if url.type == 1:
             return getSwjs()
         if url.type == 2:
@@ -552,7 +589,7 @@ def application(environ, start_response):
         if url.type == 3:
             return getHome(url)
         if url.type == 4:
-            return getRes(url.resbuild, url.resname, url.ext)
+            return getRes(url)
         if url.type == 5:
             return ExecCtx(environ, url.opPath).go()
         if url.type == 6:
