@@ -491,7 +491,7 @@ def patchPolymer(p, pfx):   # NIQUER Polymer. Comme polymer serve !
                 l.append(mod)     
             else:
                 l.append(line)       
-        return Result().setText("\n".join(l), "js")
+        return Result().setText("".join(l), "js")
 
 def getInfoSW():
     return Result().setJson({"err":"SW not active"})
