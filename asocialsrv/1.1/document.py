@@ -1,4 +1,39 @@
-import json
+import json, sys
+
+class AL:
+    def warn(self, text):
+        print(text, file=sys.stderr)
+    def error(self, text):
+        print(text, file=sys.stderr)
+al = AL()
+
+class Update:
+    def __init__(self, docDescr, docid, toDel, toUpd, version):
+        """
+        updates for an item:
+        c : 1:insert meta and content, 2:update meta only, 3:update meta and delete content, 4:update meta and content
+        cl : item class
+        key : item key, "" pour a singleton
+        meta : [v, c, l, d, t] for hdr, vcl for others, v for "deleted"
+        content: string serialized item
+        
+        updates for an index : {keys:[k], ird:1, val:[l1]] for simple, val:[[l2] ...]] for multiple
+        [k] : values of keys or [] for a singleton
+        iud: 1:insert new value (no old values) 2:replace old value by new value, 3:delete old value
+        """
+        self.docid = docid
+        self.toDel = toDel
+        self.toUpd = toUpd
+        self.version = version
+        self.table = docDescr.table
+        self.hasIndexes = docDescr.hasIndexes()
+        if toUpd:
+            self.updates = []
+            if self.hasIndexes:
+                self.indexes = {}
+                for n in docDescr.indexes:
+                    idx = docDescr.indexes[n]
+                    self.indexes[n] = {"name":n, "isList":idx.isList(), "cols":idx.columns, "updates":[]}
 
 class DocumentDescr: 
     def __init__(self, cls, table):
@@ -113,22 +148,30 @@ class Document:
             assert descr.hdr is not None, "Document " + docName + " must have an hdr Singleton"
     
     def id(self):
-        return self._descr.table + "/" + (self._docid if self._docid is not None else "!!!RELEASED!!!")
+        return self._descr.table + "/" + self.docid()
+    
+    def docid(self):
+        return self._docid if self._docid is not None else "!!!RELEASED!!!"
     
     def hdr(self):
-        assert self._docid is not None, "document " + self.id()
+        assert self._docid is not None, "Document " + self.id()
         return self._hdr
  
-    def fk(self, itd, keys):
-        return self.id() + ("@" + itd.code + ( json.dumps(keys) if keys is not None else "") if itd is not None else "")
+    def fk(self, itd, key):
+        return self.id() + "@" + (itd.code if itd is not None else "???") + key
            
     def release(self):
-        assert self._docid is not None, "document " + self.id()
+        assert self._docid is not None, "Document already released " + self.id()
         self._docid = None
-        # TODO
-    
+        self._detachAll()
+        if hasattr(self, "_age"):
+            del self._age
+        if hasattr(self, "_isfull"):
+            del self._isfull
+        # TODO : notify operation cache
+
     def delete(self):
-        assert self._docid is not None and self._age == 0 and self._status > 0, "deletion not allowed on read only or already deleted document [" + self.id() + "]"
+        assert self._docid is not None and self._age == 0 and self._status > 0, "Deletion not allowed on released or read only or deleted document [" + self.id() + "]"
         self._detachAll();
         self._status = 0;
 
@@ -140,136 +183,128 @@ class Document:
             for k in self._items[cl]:
                 self.items[cl][k]._document = None
         del self._items
+        if hasattr(self, "_hdr"):
+            self._hdr._document = None
+            del self._hdr
         if hasattr(self, "_changeditems"):
             del self._changeditems
-        if hasattr(self, "_hdr"):
-            del self._hdr
-            
-    def _create(clsOrTable, store_data, age, isfull):
+
+    def _create(clsOrTable, store_data, age, isfull): # if store_data is given, load from cache, else to create
         if clsOrTable is None:
             return None
         if isinstance(clsOrTable, str):
-            dd = Document._byTable.get(clsOrTable, None)
+            docDescr = Document._byTable.get(clsOrTable, None)
         else:
-            dd = Document._byCls.get(clsOrTable.__name__, None)
-        if dd is None:
-            return None
-        d = dd.cls()
-        d._singletons = {}
-        d._items = {}
+            docDescr = Document._byCls.get(clsOrTable.__name__, None)
+        assert docDescr is not None, "Not registered document class / table " + clsOrTable
+        d = docDescr.cls()
+        d._descr = docDescr
         d._age = age
         d._isfull = isfull
+        d._singletons = {}
+        d._items = {}
         for cl in d._descr.itemDescrByCode:
             d.items[cl] = {}
-        d._status = 1 if store_data is not None else 3
-        for c in dd.itemDescrByCode:
-            itd = dd.itemDescrByCode[c]
-            if not itd.isSingleton:
-                d._items[itd.code] = {}
         if store_data is not None:
-            d._loadFromStoreData(store_data)
-        else:   # created empty and ready and committed
-            itd = d._descr.itemDescrByCode.get("hdr")
-            d._hdr = itd.cls(d)
-            d._hdr.newEmpty(3)
+            d._status = 1
+            d._loadFromStoreData(store_data, isfull)
+            d._store_data = store_data
+            d._hdr._ready = True
+            d._hdr._status = 1
+            d._hdr._oldIndexes = d._hdr.getAllIndexes()
+        else:           # created with an empty hdr, ready and committed
+            d._status = 3
+            item = d._descr.itemDescrByCode.get("hdr").cls()._setDocument(d)._setup(3, None, None, None)
+            d._storeItem(item)
         return d
      
-    def _loadFromStoreData(self, store_data):
+    def _loadFromStoreData(self, store_data, isfull):
         for k in store_data:
             try:
-                if self._descr.isSingleton:
+                i = k.find("[")
+                if i == -1:
                     cl = k
+                    key = ""
                 else:
-                    i = k.find("[")
                     cl = k[:i]
                     key = k[i:]
-                    keys = json.loads(self._key)
                 itd = self._descr.itemDescrByCode.get(cl, None)
-                if itd is None:
-                    continue
-                if len(itd.keys) != len(self._keys):
+                if itd is None or (isfull and cl != "hdr") : ## ignore no more implemented items
                     continue
                 ms = store_data[k]
-                if ms is None or len(ms) == 0:
-                    continue
-                item = itd.cls(self)
-                item._meta = ms[0]
-                lm = len(item._meta)
-                if len(ms) == 1:         # NOT existing
-                    item._status = -1
-                    if lm != 1:
-                        continue
-                else: # existing, not ready
+                assert len(ms) >= 1 and len(ms) <= 2, "Store data corrupted len not 1 or 2 on " + k
+                if len(ms) == 1:        # NOT existing
+                    item = itd.cls()._setDocument(self)._setup(-1, ms[0], key, None)
+                else:                   # unmodified and not ready
+                    item = itd.cls()._setDocument(self)._setup(1, ms[0], key, None)
                     item._serial = ms[1];
-                    item._status = 1                 
-                if (cl == "hdr" and lm != 5) or lm != 3:
-                    continue 
-                if itd.isSingleton:
-                    if cl == "hdr":
-                        self._hdr = item
-                    else:
-                        self._singletons[cl] = item
-                else:
-                    item._keys = keys;
-                    self._items[cl][key] = item
+                self._storeItem(item)
             except Exception as e:
+                al.warm(str(e))
                 continue
-                    
+    
+    def _storeItem(self, item):
+        cl = item._descr.code
+        if item._descr.isSingleton:
+            if cl == "hdr":
+                self._hdr = item
+            else:
+                self._singletons[cl] = item
+        else:
+            self._items[cl][item.key] = item
+        
+    
     def _getItem(self, itd, keys, orNew):
         if itd.code == "hdr":
             return self._hdr
-        assert self._isfull, "_getItem [" + self.fk(itd, keys) + "] on a not full document"
+        key = json.dumps(keys) if keys is not None else ""
+        assert self._isfull, "Get item not hdr on a not full document " + self.fk(itd, key)
         assert (not itd.isSingleton and keys is not None and len(itd.keys) == len(keys)) or (itd.isSingleton and keys is None), "_getItem [" + self.fk(itd, keys) + "] incorrect number of keys"
-        if keys is not None:
-            kstr= json.dumps(keys)
-        item = self._singletons[itd.code] if itd._isSingleton is None else self._items[itd.code][kstr]
+        item = self._singletons.get(itd.code, None) if itd.isSingleton else self._items[itd.code].get(key, None)
+        
         if item is None:
+            if not orNew:
+                return None
+            # created empty
+            item = itd.cls()._setDocument(self)._setup(3, None, None, keys)
+            self._storeItem(item)
+            return item
+
+        if item._status > 1:        # created / recreated / modified (already loaded)
+            return item
+        
+        if item._status == -1:      # was NOT existing (deleted before the operation). HAS keys
             if orNew is None:
                 return None
             # created empty
-            item = itd.cls(self)
-            if itd._isSingleton:
-                item._newEmpty(3)
-                self._singletons[itd.code] = item
-            else:
-                item._keys = keys       # completely new : DOES NOT have keys
-                item._newEmpty(3)
-                self._items[itd.code][kstr] = item
-        else:
-            if item._status == -1:      # was NOT existing (deleted before the operation). HAS keys
-                if orNew is None:
-                    return None
-                # created empty
-                item._newEmpty(3)
+            item = itd.cls()._setDocument(self)._setup(3, None, None, keys)
+            self._storeItem(item)
+            return item
+        
+        if item._status == 0:       # deleted during the operation. HAS keys
+            if orNew is None:
                 return item
-            # deleted OR existing
-            if item._status == 0: # deleted during the operation. HAS keys
-                if orNew is None:
-                    return item
-                # RE created empty
-                item._setEmpty(4)
-                return item
-            if item._status > 1: # created / recreated / modified (already loaded)
-                return item
-            # not modified, perhaps never loaded
-            if not hasattr(item, "_ready"):
-                item._loadFromJson(item._serial)
-                item._setKeys()
-                item._ready = True
-                return item
+            # RE created empty, ready, committed 
+            item._resetChanges()
+            return item
+        
+        # item._status == 1 : not modified, never loaded
+        if not hasattr(item, "_ready"):
+            item._loadFromJson(item._serial)
+            self._oldIndexes = self._getAllIndexes()
+            item._ready = True
+            return item
     
     def item(self, cls, keys=None):
-        assert self._docid is not None, "document " + self.id()
+        assert self._docid is not None, "Document " + self.id()
         itd = self._descr.itemDescrByCls.get(cls.__name__, None)
-        if itd is None:
-            return None
+        assert itd is not None, "Item not registered " + cls
         return self._getItem(itd, None, False) if itd.isSingleton else self._getItem(itd, keys, False)
 
     def itemOrNew(self, cls, keys=None):
-        assert self._docid is not None, "document " + self.id()
+        assert self._docid is not None, "Document " + self.id()
         itd = self._descr.itemDescrByCls.get(cls.__name__, None)
-        if itd is None:
-            return None
+        assert itd is not None, "Item not registered " + cls
         return self._getItem(itd, None, True) if itd.isSingleton else self._getItem(itd, keys, True)
         
     def nbChanges(self):
@@ -277,45 +312,46 @@ class Document:
     
     def _notifyChange(self, dl, chg, item): 
         # chg: 0:no new item to save, 1:add item, -1:remove item, dv1/dv2 delta of volumes
+        i = item.id()
         if chg != 0 and not hasattr(self, "_changeditems"):
             self._changeditems = {}
         if chg < 0:
-            del self._changeditems[item.id()]
+            if i in self._changeditems:
+                del self._changeditems[i]
         if chg > 0:
-            self._changeditems[item.id()] = item
+            self._changeditems[i] = item
         if dl != 0:
-            self._hdr._nl = self._hdr.NL() + dl
+            self._hdr._nt = self._hdr.NT() + dl
         ch = self.nbChanges() != 0
-        if self._status == 1:
-            if ch:
-                self._status = 2
-        elif self._status == 2:
-            if not ch:
-                self._status = 1
+        if self._status == 1 and ch:
+            self._status = 2
+        elif self._status == 2 and not ch:
+            self._status = 1
         
-    def _prepareToValidate(self):
-        toSave = []
-        vt1 = 0
-        vt2 = 0
+    def _validate(self, version):
+        # _status : -1:NOT existing, 0:deleted, 1:unmodified, 2:modified, 3:created 4:recreated (after deletion)
+        if self._status == -1:
+            return None
+        toDel = self._status == 0 or self._status == 4
+        toUpd = self._status >= 2
+        upd = Update(self._descr, self.docid(), toDel, toUpd, version)
+        
+        if self._status == 0:
+            upd.store_data = {"table":self._descr.table, "docid":self._docid, "version":version, "deleted":True}
+            return upd
+        
+        if self._status == 1:
+            upd.store_data = self.store_data
+            return upd
+
+        upd.store_data = {"table":self._descr.table, "docid":self._docid, "version":version}      
         for cl in self._singletons:
-            v1, v2 = self._singletons[cl].preValidate(toSave)
-            vt1 += v1
-            vt2 += v2
+            self._singletons[cl].validate(upd, version)
         for cl in self._items:
             x = self._items[cl]
             for key in x:
-                v1, v2 = x[key].preValidate(toSave)
-                vt1 += v1
-                vt2 += v2
-        if len(toSave) == 0:
-            return False
-        hdr = self._singletons["hdr"]
-        hdr._meta["vt1"] = vt1
-        hdr._meta["vt2"] = vt2
-        if "newSerial" not in hdr._meta: # siluation of a change
-            hdr._meta["newSerial"] = hdr._meta["oldSerial"]
-        if "st" not in hdr._meta:
-            hdr._meta["st"] = 10
+                x[key].validate(upd, version)
+        return upd
     
 class BaseItem:
     """
@@ -333,11 +369,10 @@ class BaseItem:
     """
     
     def id(self):
-        return self._descr.code + ("" if self.descr.isSingleton else json.dumps(self.getKeys()))
+        return self._descr.code + self._key
     
-    def fk(self):
-        di = "disconnected" if self._document is None else self._document._descr.table + "/" + self._document._docid
-        return di + "@" + self.id()
+    def fullId(self):
+        return ("!!!DISCONNECTED!!!" if self._document is None else self._document.id()) + "@" + self.id()
 
     def istosave(self):
         return self._status == 0 or self._status == 0
@@ -369,8 +404,9 @@ class BaseItem:
     def NT(self):
         return self._nt if hasattr(self, "_nt") else self.T()
     
-    def __init__(self, document):
+    def _setDocument(self, document):
         self._document = document
+        return self
         
     def _loadFromJson(self, json_data):
         self.reset()
@@ -378,33 +414,92 @@ class BaseItem:
             d = json.loads(json_data)       # d est un dict
             for var in d:
                 setattr(self, var, d[var])
-        
-        if len(self._descr.indexes) != 0:
-            # calcul de la serialisation initiale des index
-            self._meta["oldIndexes"] = {}
-            for idx in self._descr.indexes:
-                self._meta["_oldIndexes"][idx] = self.getIndexedValues(idx)
+        if not self._descr.isSingleton:
+            self._setKeys()
+        self._ready = True
         return self
                 
-    def _newEmpty(self, status):
-        self._reset()
-        d = self.__dict__
-        if hasattr(d, "_newindexes"):
-            del d["_newindexes"]
-        self._meta = [0,0,0,0,0] if self._descr.code == "hdr" else [0,0,0]
-        self._newserial = "{}"
+    def _getAllIndexes(self):
+        if len(self._descr.indexes) == 0:
+            return None
+        # calcul de la serialisation initiale des index
+        res = {}
+        for idx in self._descr.indexes:
+            v = self.getIndexedValues(idx)
+            if v is not None:
+                res[idx] = v
+        return res if len(res) > 0 else None        
+
+    def _getIndexedValues(self, idxName):
+        idx = self._descr.indexes.get(idxName, None)
+        if idx is None:
+            return None
+        if not idx.isList():
+            values = []
+            for var in idx.columns:
+                v = getattr(self, var, None)
+                if v is None:
+                    return None
+                values.append(v)            
+            return values
+        else:
+            result = []
+            lst = getattr(self, idx.varList, None)
+            if lst is None:
+                return None
+            for line in lst:
+                values = []
+                for var in idx.columns:
+                    if var.startsWith("*"):
+                        v = line.get(var[1:], None)
+                    else:
+                        v = getattr(self, var, None)
+                    if v is None:
+                        break
+                    values.append(v)
+                if len(values) == len(idx.columns):
+                    result.append(values)
+            return result if len(result) > 0 else None
+                
+    def _setup(self, status, meta, key, keys): # status -1:NOT 1:unch 3:created            
+        if key is not None:
+            self._key = key
+            assert not self._descr.isSingleton, "Key on a singleton " + self.id()
+            if len(key) != 0:
+                self._keys = json.loads(key) if keys is None else keys
+                assert len(self._keys) == len(self._descr.keys), "Bad keys length on item " + self.id()
+                self._setKeys()
+        else:
+            if keys is not None:
+                self._keys = keys
+                self._key = json.dumps(keys)
+                assert not self._descr.isSingleton, "Key on a singleton " + self.id()
+                assert len(keys) == len(self._descr.keys), "Bad keys length on item " + self.id()
+                self._setKeys()
+            else:
+                self.key = ""
+                assert self._descr.isSingleton, "Key missing on a item " + self.id()            
+
+        if meta is None:
+            self._meta = [0,0,0,0,0] if self._descr.code == "hdr" else [0,0,0]
+        else:
+            assert (status == -1 and len(meta) == 1) or (status != -1 and ((self._descr.code == "hdr" and len(meta) == 5) or (self._descr.code != "hdr" and len(meta) == 3))), "Bad meta length on " + self.id()
+            self._meta = meta
+                
         self._status = status
-        self._ready = True
-        self._setKeys()
-        self._nl = self._getKeyLength()
-        self._document._notifyChange(self._nl, 1, self)
+        if status == 3:
+            self._newserial = "{}"
+            self._ready = True            
+            self._nl = self._getKeyLength() + 2
+            self._document._notifyChange(self._nl, 1, self)
+            
+        return self
     
     def _setKeys(self):
-        if not self._desr.isSingleton:
-            i = 0
-            for nk in self._descr.keys:
-                setattr(self, nk, self._keys[i])
-                i += 1
+        i = 0
+        for nk in self._descr.keys:
+            setattr(self, nk, self._keys[i])
+            i += 1
 
     def _getKeys(self):
         k = []
@@ -414,189 +509,181 @@ class BaseItem:
         return k
     
     def _getKeyLength(self):
-        return 0 if self._desr.isSingleton else len(json.dumps(self.getKeys()))
+        return len(self._descr.code) + len(self.key)
     
     def _reset(self):
         for var in self.__dict__:
             if not var.startswith("_"):
                 del self.__dict__[var]
 
-    def _delChanges(self, opt=False):
-        d = self.__dict__
-        if hasattr(d, "_newindexes"):
-            del d["_newindexes"]
-        if hasattr(d, "_nl"):
-            del d["_nl"]
-        if not opt:
-            if hasattr(d, "_ready"):
-                del d["_ready"]
-            if hasattr(d, "_newserial"):
-                del d["_newserial"]
-        else:
-            self._newserial = "{}"
-            self._ready = True
+    def _resetChanges(self):
+        self._reset()
+        self._status = 4
+        self._newserial = "{}"
+        self._ready = True            
+        self._nl = self._getKeyLength() + 2
+        self._document._notifyChange(self._nl, 1, self)
 
     def toJson(self):
-        assert self._document._docid is not None, "document " + self._document.id()
+        assert self._document._docid is not None, "Document " + self._document.id()
         bk = {}
         for x in self.__dict__:
             if not x.startswith("_"):
                 bk[x] = self.__dict__[x]
+        if not self._descr.isSingleton:
+            for var in self._descr.keys:
+                if bk.get(var, None) is not None:
+                    del bk[var]
         return json.dumps(bk)
 
-    def getIndexedValues(self, idxName):
-        assert self._document._docid is not None, "document " + self._document.id()
-        idx = self._descr.indexes.get(idxName, None)
-        if idx is None:
-            return None
-        if not idx.isList():
-            values = []
-            for var in idx.columns:
-                values.append(getattr(self, var, None))            
-            return json.dumps(values)
-        else:
-            result = []
-            lst = getattr(self, idx.varList)
-            for x in lst:
-                values = []
-                for var in idx.columns:
-                    values.append(x.get(var, None))            
-                result.append(values)
-            return json.dumps(result)   
         
     def commit(self):
-        assert self._document._docid is not None, "document " + self._document.id()
-        assert self._document._age == 0, "commit forbidden on read only documents " + self.fk()
-        assert self._status > 0, "commit forbidden on a deleted item " + self.fk()
+        assert self._document is not None, "Disconnected item : na action possible " + self.id()
+        assert self._document._docid is not None, "Document " + self._document.id()
+        assert self._document._age == 0, "commit forbidden on read only document " + self.fullId()
+        assert self._status > 0, "commit forbidden on a deleted item " + self.fullId()
         ser = self.toJson()
-        dv1, dv2 = self._getDV(ser)
-        if self._status > 2:    # created / recreated : status inchangé
-            self._newserial = ser
-            self._document._notifyChange(dv1, dv2, 0)
-            return
-        # unmodified or modified
-        if self._status == 2 and ser == self._serial:  # WAS modified but nothing new
-            self._status = 1;
-            del self.__dict__["_newserial"]
-            del self.__dict__["_newindexes"]
-            self._document._notifyChange(dv1, dv2, -1, self) # one less to save
-            return
-        # unmodified or modified but new
-        if ser == self._serial:
-            return  # nothing changed
-        self._newserial = ser
-        self._status = 2
-        self._document._notifyChange(dv1, dv2, 1, self)
-        self._newindexes = {}
-        for idx in self._descr.indexes:
-            idx = self.getIndexedValues(idx)
-            old = self._oldindexes[idx] if hasattr(self, "_oldindexes") else ""
-            if idx != old:
-                self._newindexes[idx] = idx
+        nl = self._getKeyLength() + len(ser)
+        dv = nl - self.NL()
+        self._nl = nl
         
-    def _getDV(self, ser):
-        dv1 = len(ser) - self.nv1()
-        self._nv1 = len(ser)
-        av2 = 0 if not hasattr(self, "v2") else self.v2 # v2 actuellement déclaré dans l'item
-        dv2 = av2 - self.nv2()
-        self._nv2 = av2
-        return(dv1, dv2)
+        if self._status > 2:            # created / recreated : status not changed
+            if self._newserial != ser:  # content changed
+                self._newserial = ser
+                self._newindexes = self.getAllIndexes()
+                self._document._notifyChange(dv, 0)
+            return
+        
+        if self._status == 2:       # modified
+            if ser == self._serial: # but ... NOT
+                self._status = 1;
+                del self.__dict__["_newserial"]
+                del self.__dict__["_newindexes"]
+                self._document._notifyChange(dv, -1, self) # one less to save
+            else:
+                if self._newserial != ser:  # content changed
+                    self._newserial = ser
+                    self._newindexes = self.getAllIndexes()
+                    self._document._notifyChange(dv, 0)
+            return
+        
+        # unmodified status == 1
+        if ser != self._serial:
+            self._status = 2
+            self._newserial = ser
+            self._newindexes = self.getAllIndexes()
+            self._document._notifyChange(dv, 1, self)
         
     def delete(self):
-        assert self._document._docid is not None, "document " + self._document.id()
-        assert self._document._age == 0, "delete forbidden on read only documents " + self.fk()
-        assert self._status > 0, "delete forbidden on a deleted item " + self.fk()
+        assert self._document is not None, "Disconnected item : na action possible " + self.id()
+        assert self._document._docid is not None, "Document " + self._document.id()
+        assert self._document._age == 0, "Deleting item forbidden on read only documents " + self.fullId()
+        assert self._descr.code != "hdr", "Deleting hdr forbidden " + self.fullId()
         if self._status < 1:
             return
         self._status = 0
-        self._changes()
-        self.reset()
+        self._reset()
+        if hasattr(self, "_newserial"):
+            del self._newserial
+        if hasattr(self, "_newindexes"):
+            del self._newindexes
+        nl = self._getKeyLength()
+        dv = nl - self.NL()
+        self._nl = nl
+        self._document._notifyChange(dv, 1, self)
         
     def rollback(self):
-        assert self._document._docid is not None, "document " + self._document.id()
-        assert self._document._age == 0, "rollback forbidden on read only documents " + self.fk()
-        #TODO
+        assert self._document is not None, "Disconnected item : na action possible " + self.id()
+        assert self._document._docid is not None, "Document " + self._document.id()
+        assert self._document._age == 0, "Rollback forbidden on read only documents " + self.fullId()
+        if self._status < 0 or self.status == 1:
+            return
+        nl = self._getKeyLength() + len(self._serial)
+        dv = nl - self.NL()
+        self._nl = 0
+        self._reset()
+        if hasattr(self, "_newserial"):
+            del self._newserial
+        if hasattr(self, "_newindexes"):
+            del self._newindexes
+        if hasattr(self, "_serial") and self._serial is not None and len(self._serial) != 0:
+            # was existing at the operation beginnin
+            self._status = 1
+            self._loadFromJson(self._serial)
+            self._oldIndexes = self._getAllIndexes()
+            self._ready = True
+            self._document._notifyChange(dv, 1, self)
+        else:       # was NOT existing, disconnecting
+            self._document._notifyChange(dv, -1, self)
+            self._ready = False
+            self._document = None
+            self._status = -1
             
-    # TODO
-    def _preValidate(self, toSave):
-        m = self._meta
-        if "serial" not in m:       # did'nt exist before
-            if "committed" in m:    # it's a creation
-                m["st"] = 1
-                ser = self.toJson()
-                m["nv1"] = len(ser)
-                m["newSerial"] = ser
-                m["newIndexes"] = {}
-                for idx in self._descr.indexes:
-                    m["newIndexes"][idx] = self.getIndexedValues(idx)
-            toSave.append(self)
-        else:                       # was existing before
-            if "deleted" in m:      # but now deleted
-                m["st"] = 2
-                m["nv1"] = 0
-                toSave.append(self)
-            else:
-                if "committed" in m:    # perhaps updated
-                    ser = self.toJson()
-                    st = 0
-                    if m["nv2"] != m["nv2"]:
-                        st = 3
-                    if ser != m["serial"]:
-                        m["newSerial"] = ser
-                        m["nv1"] = len(ser)
-                        m["newIndexes"] = {}
-                        st += 10
-                        for idx in self._descr.indexes:
-                            x = self.getIndexedValues(idx)
-                            y = m["oldIndexes"][idx]
-                            if x != y:
-                                m["newIndexes"][idx] = x
-                    if st > 0:
-                        m["st"] = st
-                        toSave.append(self)
-        v1 = m["v1"] if "nv1" not in m else m["nv1"]
-        v2 = m["v2"] if "nv2" not in m else m["nv2"]
-        return (v1, v2)
-        
-        def postValidate(self, stamp):
-            m = self._meta
-            s = m["st"]
-            if s == 1:
-                m["version"] = stamp
-                m["serial"] = m["newSerial"]
-                for idx in self._descr.indexes:
-                    if idx in m["newIndexes"]:
-                        m["oldIndexes"][idx] = m["newIndexes"][idx]
-                m["v1"] = m["nv1"]
-                del m["newIndexes"]
-                del m["newSerial"]
-                del m["st"]
-                del m["nv2"]
-                del m["nv1"]
-            elif s == 2:
-                m["version"] = stamp
-                del m["newIndexes"]
-                del m["newSerial"]
-                del m["serial"]
-                del m["st"]
-                del m["nv2"]
-                del m["nv1"]
-            else:
-                m["version"] = stamp
-                if s % 10 == 3:
-                    m["v2"] = m["nv2"]
-                    del m["nv2"]
-                if s // 10 == 1:
-                    m["serial"] = m["newSerial"]
-                    m["v1"] = m["nv1"]
-                    del m["nv1"]
-                    for idx in self._descr.indexes:
-                        if idx in m["newIndexes"]:
-                            m["oldIndexes"][idx] = m["newIndexes"][idx]
-                del m["newIndexes"]
-                del m["newSerial"]
-                del m["st"]
+    def _eq(self, oldv, newv, isList):
+        if isList:
+            i = 0
+            for v in oldv:
+                if newv[i] != v:
+                    return False
+                i += 1
+            return True
+        if len(oldv) != len(newv):
+            return False
+        j = 0
+        for x in oldv:
+            y = newv[j]
+            i = 0
+            for v in x:
+                if y[i] != v:
+                    return False
+                i += 1
+            j += 1
+        return True
+    
+    def _validate(self, upd, version):
+        #   _status : -1:NOT existing, 0:deleted, 1:unmodified, 2:modified, 3:created 4:recreated (after deletion)
+        # c : 1:insert meta and content, 2:update meta only, 3:update meta and delete content, 4:update meta and content
 
+        if self._status == 0:
+            self._meta[0] = version
+            upd.updates.append({"c":3, "cl":self._descr.code, "key":self._key, "meta":self._meta})
+            upd.store_data[self.id()] = [self._meta]
+            return
+        
+        if self._status == 1:
+            if self._descr.code == "hdr":
+                self._meta[0] = version
+                upd.updates.append({"c":2, "cl":"hdr", "key":"", "meta":self._meta})
+            upd.store_data[self.id()] = [self._meta, self._serial]
+            return
+
+        self._meta[0] = version
+        c = 1 if self._status == 3 else 4
+        upd.updates.append({"c":c, "cl":self._descr.code, "key":self._key, "meta":self._meta, "content":self._newserial})
+        upd.store_data[self.id()] = [self._meta, self._newserial]
+        if not self._descr.hasIndexes():
+            return
+        oldi = self._oldindexes if hasattr(self, "_oldindexes") else None
+        newi = self._newindexes if hasattr(self, "_newindexes") else None
+        for idx in self._descr.indexes:
+            # upd.indexes[n] = {"name":n, "isList":idx.isList(), "cols":idx.columns, "updates":{}
+            # updates for an index : {keys:[k], ird:1, val:[l1]] for simple, val:[[l2] ...]] for multiple
+            # [k] : values of keys or [] for a singleton
+            # ird: 1:insert new value (no old values) 2:replace old value by new value, 3:delete old value
+
+            ui = upd.indexes[idx]
+            oldv = oldi[idx] if oldi is not None and idx in oldi else None
+            newv = newi[idx] if newi is not None and idx in newi else None
+            ird = 0 if oldv is None and newv is None else (3 if oldv is not None and newv is None else (1 if oldv is None and newv is not None else (2 if not self._eq(oldv, newv, ui.isList) else 0)))
+            if ird == 0:
+                ui.up = None
+            else:
+                up = ui.up
+                up["keys"] = [] if self._descr.isSingletoon else self.keys
+                up["ird"] = ird
+                if ird != 3:
+                    up["val"] = newv
+        
 class Singleton(BaseItem):
     def __init__(self, document):
         super().__init__(document)

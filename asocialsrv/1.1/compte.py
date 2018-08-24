@@ -7,14 +7,12 @@ class Compte(Document):
 Document.register(Compte, "compte")
 
 class CompteHdr(Singleton):
-    def __init__(self, document):
-        super().__init__(document)
+    pass
         
 Document.registerItem(Compte, CompteHdr, "hdr", None, [Index("psrbd", ["psrBD"]), Index("dhx", ["dhx"])])
 
 class Adherent(Item):
-    def __init__(self, document):
-        super().__init__(document)
+    pass
 
 Document.registerItem(Compte, Adherent, "adh", ["da", "na"], [Index("adr", ["cp", "np"]), Index("enf", ["*dn", "*prn", "np"], "enfants")])
 
@@ -25,25 +23,27 @@ y = Adherent._descr
 Document.check()
 
 
-store_data = {}
+store_data = {"table":"compte", "docid":"doc1234"} # si deleted: pas de hdr
 store_data["hdr"] = [[180820145325000, 180820145325000, 1016, 0, 2032], json.dumps({"psrBD":"toto", "hdx":2016})]
-store_data['adh[180812,3]'] = [[0, 1016], json.dumps({"cp":"94240", "np":"SPRTS", "enfants":[{"dn":720717, "prn":"Cécile"}, {"dn":760401, "prn":"Emilie"}]})]
+store_data["adh[180812,3]"] = [[0, 1016], json.dumps({"cp":"94240", "np":"SPRTS", "enfants":[{"dn":720717, "prn":"Cécile"}, {"dn":760401, "prn":"Emilie"}]})]
 
-compte = Document._create(Compte, store_data, 0, store_data)
+compte = Document._create(Compte, store_data, 0, True)
 
 hdr = compte.itemOrNew(CompteHdr)
 
-print (hdr.getIndexedValues("dhx"))
+print (hdr._getIndexedValues("dhx"))
 hdr.psrBD = "toto"
 hdr.psBDD = "titi"
 hdr.c0s = None
 hdr.dhx = 2018
-print (hdr.getIndexedValues("dhx"))
+print (hdr._getIndexedValues("dhx"))
 
 contact = compte.itemOrNew(Adherent, [180812,3])
-print (contact.getIndexedValues("enf"))
+print (contact._getIndexedValues("enf"))
 contact.np = "SPORTES"
 contact.enfants = [{"dn":720707, "prn":"Cécile"}, {"dn":760401, "prn":"Emilie"}]
-print (contact.getIndexedValues("enf"))
+print (contact._getIndexedValues("enf"))
+
+upd = compte._validate(180820150000000)
 
 print ("OK")
