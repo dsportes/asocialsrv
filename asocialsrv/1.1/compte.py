@@ -1,8 +1,8 @@
-from document import Document, Singleton, Item, Index
+from document import Document, Singleton, Item, Index, DocumentArchive
 import json
 
 class Compte(Document):
-    pass
+    DELHISTORYINDAYS = 20
 
 Document.register(Compte, "compte")
 
@@ -22,12 +22,13 @@ y = Adherent._descr
 
 Document.check()
 
+arch = DocumentArchive("compte", "doc1234")
+arch.addItem("hdr", (180820145325000, 1016, 180820145325000, 0, 2032), 
+             json.dumps({"psrBD":"toto", "hdx":2016}))
+arch.addItem("adh[180812,3]", (180820145325000, 1016, 0), 
+             json.dumps({"cp":"94240", "np":"SPRTS", "enfants":[{"dn":720717, "prn":"Cécile"}, {"dn":760401, "prn":"Emilie"}]}))
 
-store_data = {"table":"compte", "docid":"doc1234"} # si deleted: pas de hdr
-store_data["hdr"] = [[180820145325000, 180820145325000, 1016, 0, 2032], json.dumps({"psrBD":"toto", "hdx":2016})]
-store_data["adh[180812,3]"] = [[0, 1016], json.dumps({"cp":"94240", "np":"SPRTS", "enfants":[{"dn":720717, "prn":"Cécile"}, {"dn":760401, "prn":"Emilie"}]})]
-
-compte = Document._create(Compte, store_data, 0, True)
+compte = Document._create(None, arch, 0, True)
 
 hdr = compte.itemOrNew(CompteHdr)
 
