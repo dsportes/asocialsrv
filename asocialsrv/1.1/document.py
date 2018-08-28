@@ -1,5 +1,7 @@
-import json, sys
-from root import AL, Stamp
+import json
+from root import Stamp, Operation
+from threading import Lock
+from settings import settings
 
 class Update:
     def __init__(self, docDescr, docid, toDel, toUpd, version, newDtime):
@@ -64,10 +66,9 @@ class DocumentArchive:
 
     def id2(self, cl, keys):
         return self.table + "/" + self.docid + "@" + cl +str(keys)
-        
+
     def addItem(self, clkey, meta, content):
         assert (clkey is not None and isinstance(clkey, str) and len(clkey) > 1), "Item clkey is not a valid string for table " + id()
-        assert meta is not None and isinstance(meta, tuple), "Item meta is not a tuple for table " + id()
         i = clkey.find("[")
         keys = ()
         if i == -1:
@@ -80,10 +81,14 @@ class DocumentArchive:
             except Exception as e:
                 err = str(e)
             assert err is None, "Invalid keys for " + self.id(clkey) + ". Error : " + err             
+        self.addItem3(cl, keys, meta, content)
+        
+    def addItem3(self, cl, keys, meta, content):
+        assert meta is not None and isinstance(meta, tuple), "Item meta is not a tuple for table " + id()
         itd = self.descr.itemDescrByCode.get(cl, None)
         if itd is None or (not self.isfull and cl != "hdr") : ## ignore no more implemented items
             return
-        assert (len(keys) == 0 and itd.isSingleton) or len(keys) == len(itd.keys), "Invalid number of keys for " + self.id(clkey)
+        assert (len(keys) == 0 and itd.isSingleton) or len(keys) == len(itd.keys), "Invalid number of keys for " + self.id2(cl, keys)
         self.addItem2(itd, keys, meta, content)
         
     def addItem2(self, itd, keys, meta, content):
@@ -106,7 +111,7 @@ class DocumentArchive:
         self.items[k] = v
         if cl == "hdr":
             self.hdr = v
-
+            
     def clkeys(self):
         return self.items.keys()
     
@@ -126,6 +131,9 @@ class DocumentDescr:
         
     def hasIndexes(self):
         return len(self.indexes) != 0
+    
+    def id(self, docid):
+        return self.table + "/" + docid;
     
 class ItemDescr:
     def __init__(self, DocumentClass, ItemClass, code, keys, indexes):
@@ -280,9 +288,9 @@ class Document:
         assert docid is not None and isinstance(docid, str) and len(docid) > 0, "Empty docid on createNew"
         return Document._create(docDescr, docid, None, age, isfull)
             
-    def _createFromArchive(arch, age, isfull): # if store_data is given, load from cache, else to create
+    def _createFromArchive(arch): # if store_data is given, load from cache, else to create
         assert arch is not None and isinstance(arch, DocumentArchive), "createFromArch with no arch"
-        return Document._create(arch.descr, arch.docid, arch, age, isfull)
+        return Document._create(arch.descr, arch.docid, arch, 0, True)
 
     def _create(docDescr, docid, arch, age, isfull): # if store_data is given, load from cache, else to create            
         d = docDescr.cls()
@@ -760,3 +768,113 @@ class Singleton(BaseItem):
 
 class Item(BaseItem):
     pass
+
+class DOperation(Operation):
+    gCache = {      # key : archive.id() - value : (archive, lastGet, lastCheck)
+    gCacheLock = Lock()
+    gCacheSize = 0
+    
+    def _getArchive(id):
+        with DOperation.gCacheLock:
+            now = Stamp.epochNow()
+            drec = DOperation.gCache.get(id, None)
+            if drec != None:
+                DOperation.gCache[id] = (drec[0], now, drec[2])
+                return drec
+            else:
+                return None
+    
+    def _setArchiveLastCheck(fid, stamp):
+        with DOperation.gCacheLock:
+            drec = DOperation.gCache.get(fid, None)
+            # tuple : archive, lastGet, lastCheck
+            if drec != None:
+                DOperation.gCache[id] = (drec[0], drec[1], stamp)
+    
+    def _storeArchive(arch, stamp):
+        with DOperation.gCacheLock:
+            tsAfter = arch.totalSize
+            drec = DOperation.gCache.get(id, None)
+            if drec != None:
+                if drec[0].version > arch.version:
+                    return
+                tsBefore = drec[0].totalSize
+                DOperation.gCache[arch.id()] = (arch, stamp, stamp)
+                if tsAfter > tsBefore and DOperation.gCacheSize - tsBefore + tsAfter > settings.MAXCACHESIZE:
+                    DOperation._cleanUp()
+    
+    def _cleanup():
+        lst = sorted(DOperation.gCache.values(), key=lambda drec: drec[1])
+        mx = settings.MAXCACHESIZE // 2
+        vol = 0
+        for drec in lst:
+            vol += drec[0].totalSize
+            del DOperation.gCache(drec[0].id())
+            if vol > mx:
+                return
+
+    def __init__(self, execCtx):
+        super().__init__(execCtx)
+        self.docCache = {}      # key id(), value: tuple (arch, age)
+        
+    def _getDescr(self, clsOrTable, docid):
+        if isinstance(clsOrTable, str):
+            docDescr = Document._byTable.get(clsOrTable, None)
+        else:
+            docDescr = Document._byCls.get(clsOrTable.__name__, None)
+        assert docDescr is not None, "Not registered document class / table " + clsOrTable
+        assert docid is not None and isinstance(docid, str) and len(docid) > 0, "Empty docid on createNew"
+        return docDescr
+
+    def getOrNew(self, clsOrTable, docid, isfull):
+        descr = self._getDescr(clsOrTable, docid)
+        d = self._get(descr, docid, 0, isfull)
+        if d is not None:
+            return d
+        d = Document._create(descr, docid, None, 0, isfull)
+        self.docCache[descr(docid)] = (d , 0)
+        return d
+        
+    def get(self, clsOrTable, docid, age, isfull): 
+        descr = self._getDescr(clsOrTable, docid)
+        return self._get(descr, docid, age, isfull)
+    
+    def _get(self, descr, docid, age, isfull): 
+        fid = descr(docid)
+        d = self.docCache.get(fid, None)
+        if d is not None:           # document in operation cache
+            assert (isfull and d.isfull) or not isfull, "An operation cannot require full and restricted state of a same document : " + id
+            assert d[1] <= age, "An operation cannot require different ages of a same document : " + id
+            return d[0]   # OK
+        drec = DOperation._getArchive(fid)
+        if drec is not None:        # archive found in global cache
+            arch = drec[0]
+            now = drec[1]
+            lc = drec[2]
+            if (isfull and arch.isfull) or not isfull:      # fulness is compatible
+                if now - lc < age * 1000:                   # age is compatible
+                    d = Document._createFromArchive(arch)   # build document
+                    self.docCache[fid] = (d , age)                 # store document in operation cache
+                    return d
+            # has to be refreshed from DB
+            status, delta = self.provider.getDelta(arch, isfull)
+            if status == 0:         # document does not exist
+                return None
+            if status == 1:         # nothing to refresh
+                DOperation._setArchiveLastCheck(fid, now)    # set the last refresh stamp in global cache
+                d = Document._createFromArchive(arch)       # build document
+                self.docCache[fid] = (d , age)               # store document in operation cache
+                return d
+            newarch = arch.merge(delta)
+            DOperation._storeArchive(newarch, now)          # store it in global cache
+            d = Document._createFromArchive(arch)           # build document
+            self.docCache[fid] = (d , age)                   # store document in operation cache
+            return d
+        # archive not found in global cache
+        status, delta = self.provider.getArchive(descr.table, docid, isfull)
+        if status == 0:         # document does not exist
+            return None
+        DOperation._storeArchive(newarch, now)          # store it in global cache
+        d = Document._createFromArchive(arch)           # build document
+        self.docCache[id] = (d , age)                   # store document in operation cache
+        return d
