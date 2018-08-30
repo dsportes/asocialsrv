@@ -129,14 +129,22 @@ class Provider:
             return t.decode("utf-8")
         except:
             return ""
+        
+    def contentarg(content):
+        if content is None or len(content) == 0:
+            return (None, None)
+        if len(content) < 2000:
+            return (content, None)
+        b = content.encode("utf-8")
+        return (None, compress(b))
 
     sqlitems1 = "SELECT `clkey`, `version`, `size`, `ctime`, `dtime`, `totalsize`, `serial`, `serialGZ` FROM "
-    sqlitems2a = " WHERE `docid` = %s"
-    sqlitems2b = " WHERE `docid` = %s and `clkey` = 'hdr[]'"
-    sqlitems2c = " WHERE `docid` = %s and `version` > %s and `clkey` != 'hdr[]'"
+    sqlitems2a = "_item WHERE `docid` = %s"
+    sqlitems2b = "_item WHERE `docid` = %s and `clkey` = 'hdr[]'"
+    sqlitems2c = "_item WHERE `docid` = %s and `version` > %s and `clkey` != 'hdr[]'"
 
     sqlitems3 = "SELECT `clkey` FROM "
-    sqlitems3c = " WHERE `docid` = %s and `version` < %s and `clkey` != 'hdr[]' and `size` != 0"
+    sqlitems3c = "_item WHERE `docid` = %s and `version` < %s and `clkey` != 'hdr[]' and `size` != 0"
     
     def getArchive(self, table, docid):
         """
@@ -144,7 +152,7 @@ class Provider:
         """
         arch = DocumentArchive(table, docid, True)
         arch.docid = docid
-        sql = Provider.sqlitems1 + self.org + "_item" + Provider.sqlitems2a
+        sql = Provider.sqlitems1 + self.org + "_" + table + Provider.sqlitems2a
         try:
             nbItems = 0
             with self.connection.cursor() as cursor:
@@ -176,7 +184,7 @@ class Provider:
         """
         arch = DocumentArchive(table, docid, False)
         arch.docid = docid
-        sql = Provider.sqlitems1 + self.org + "_item" + Provider.sqlitems2b
+        sql = Provider.sqlitems1 + self.org + "_" + table + Provider.sqlitems2b
         try:
             with self.connection.cursor() as cursor:
                 if cursor.execute(sql, (docid, version)) == 0:
@@ -192,7 +200,7 @@ class Provider:
         except Exception as e:
             raise self.SqlExc(sql, e)
     
-    def getDelta(self, cible, isfull):
+    def getDelta(self, table, cible, isfull):
         """
         Construit l'archive delta du document table/docid pour la mise à jour de la cible
         retourne le tuple (statut, delta)
@@ -256,7 +264,7 @@ class Provider:
             minv = dtc
         arch.dtime = dtd
         
-        sql = Provider.sqlitems1 + self.org + "_item" + Provider.sqlitems2c
+        sql = Provider.sqlitems1 + self.org + "_" + table + Provider.sqlitems2c
         try:
             with self.connection.cursor() as cursor:
                 if cursor.execute(sql, (cible.docid, minv)) != 0:
@@ -285,7 +293,7 @@ class Provider:
         
         # arch.keys est le set de toutes les clkeys modifiées avant vc et existantes
         arch.keys = set()
-        sql = Provider.sqlitems3 + self.org + "_item" + Provider.sqlitems3c
+        sql = Provider.sqlitems3 + self.org + "_" + table + Provider.sqlitems3c
         try:
             with self.connection.cursor() as cursor:
                 if cursor.execute(sql, (cible.docid, vc)) != 0:
@@ -296,6 +304,7 @@ class Provider:
             raise self.SqlExc(sql, e)
         return (2, arch)
 
+    ####################################################################################
 
     sqlpurge = "DELETE FROM "
     sqlpurgea = " WHERE `docid` = %s"
@@ -304,7 +313,7 @@ class Provider:
         """
         Purge les items d'un docid donné
         """
-        names = list("item")
+        names = list(descr.table + "_item")
         for idx in descr.indexes:
             names.append(idx)
         
@@ -317,13 +326,13 @@ class Provider:
                 raise self.SqlExc(sql, e)
 
     sqlitems4 = "SELECT `version` FROM "
-    sqlitems4a = " WHERE `docid` = %s FOR UPDATE NOWAIT"
+    sqlitems4a = "_item WHERE `docid` = %s FOR UPDATE NOWAIT"
 
     def lockHdr(self, table, docid, version):
         """
         Check la version du hdr. Si version == 0, ne DOIT pas exister
         """
-        sql = Provider.sqlitems4 + self.org + "_item" + Provider.sqlitems4a
+        sql = Provider.sqlitems4 + self.org + "_" + table + Provider.sqlitems4a
         try:
             with self.connection.cursor() as cursor:
                 if cursor.execute(sql, (docid,)) == 0:
@@ -338,37 +347,115 @@ class Provider:
         except Exception as e:
             al.warn(str(e))
             raise AppExc("XCV", self.operation.opName, self.org, table + "/" + docid)
-          
-    def insertMetaAndContent(self, table, docid, u): # u keys, meta, content
-        pass
+    
+    """
+    `docid` varchar(128) NOT NULL COMMENT 'identifiant du document',
+     `clkey` varchar(128) NOT NULL COMMENT 'classe / identifiant de l''item',
+     `version` bigint(20) NOT NULL COMMENT 'version de l''item, date-heure de dernière modification',
+     `size` int(11) NOT NULL,
+     `ctime` bigint(20) DEFAULT NULL,
+     `dtime` bigint(20) DEFAULT NULL,
+     `totalsize` int(11) DEFAULT NULL,
+     `serial` varchar(4000) DEFAULT NULL COMMENT 'sérialiastion de l''item',
+     `serialGZ` blob COMMENT 'sérialisation gzippée de l''item',
 
-    def updateMetaOnly(self, table, docid, u):
-        pass
+    """
+    sqlitemins1 = "INSERT INTO "
+    sqlitemins2 = "_item (`docid`, `clkey`, `version`, `size`, `ctime`, `dtime`, `totalsize`, `serial`, `serialGZ`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
+
+    sqlitemupd1 = "UPDATE "
+    sqlitemupd2a = "_item SET `version` = %s, `size` = %s, `ctime` = %s, `dtime` = %, `totalsize` = %s WHERE `docid` = %s AND `clkey` = %s"
+    sqlitemupd2b = "_item SET `version` = %s, `size` = %s, `ctime` = %s, `dtime` = %, `totalsize` = %s, `serial` = %s, `serialGZ` = %s WHERE `docid` = %s AND `clkey` = %s"
     
-    def updateMetaAndDeleteContent(self, table, docid, u):
-        pass
+    def _dclk(self, docid, u):
+        return (docid, u["cl"] + json.dumps(u["keys"]))
     
-    def updateMetaAndContent(self, table, docid, u):
-        pass
-          
-    def setSingleIndex(self, name, ird, docid, kns, cols, keys, val): # val LE tuple d'index
-        pass
+    def _meta(self, u):
+        meta = u["meta"]
+        return meta if len(meta) == 5 else meta + (0, 0)
     
-    def setMultipleIndex(self, name, ird, docid, kns, cols, keys, lval): # lval : list des tuples d'index
-        pass
-          
+    def _sql(self, sql, args):
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(sql, args)
+        except Exception as e:
+            raise self.SqlExc(sql, e)
+    
+    def _insidx(self, name, cols, kns, docid, keys, lval):
+        t = list("INSERT INTO " + self.org + "_" + name +"(")
+        for col in cols:
+            t.append("`" + (col if not col.startswith("*") else col[1:]) + "`,")
+        t.append("`docid`")
+        if len(kns) > 0:
+            for k in kns:
+                t.append(",`" + k + "`")
+        t.append(") VALUES ")
+        t2 = []
+        for i in range(len(lval)):
+            t3 = []
+            for j in range(len(cols) + len(kns) + 1):
+                t3.append("%s")
+            t2.append("(" + ",".join(t3) + ")")
+        t.append(",".join(t2))
+        sql = "".join(t)
+        args = list()
+        for val in lval:
+            for x in val:
+                args.append(x)
+            args.append(docid)
+            if len(keys) > 0:
+                for k in keys:
+                    args.append(k)
+        self._sql(sql, args)
+        
+    def _updidx(self, name, cols, kns, docid, keys, val):
+        t = list("UPDATE " + self.org + "_" + name +" SET ")
+        t2 = []
+        for col in cols:
+            t2.append("`" + (col if not col.startswith("*") else col[1:]) + "`=%s")
+        t.append(",".join(t2))
+        t.append(" WHERE `docid`=%s")
+        for kn in kns:
+            t.append(" and `" + kn + "` = %s")
+        sql = "".join(t)
+        args = list()
+        for v in val:
+            args.append(v)
+        args.append(docid)
+        for kv in keys:
+            args.append(kv)
+        self._sql(sql, args)
+            
+    def _delidx(self, name, kns, docid, keys):
+        t = list("DELETE FROM " + self.org + "_" + name +" WHERE `docid`=%s")
+        for kn in kns:
+            t.append(" and `" + kn + "` = %s")
+        sql = "".join(t)
+        args = list()
+        args.append(docid)
+        for kv in keys:
+            args.append(kv)
+        self._sql(sql, args)
+                        
     def IUDitems(self, upd):
+        nbi = 0
         for u in upd.updates.values():
+            nbi += 1
             # c : 1:insert meta and content, 2:update meta only, 3:update meta and delete content, 4:update meta and content
             # u {"c":c, "cl":cl, "keys":keys, "meta":meta, "content":content}
-            if u.c == 1:
-                self.insertMetaAndContent(upd.table, upd.docid, u)
-            elif u.c == 2:
-                self.updateMetaOnlytable(upd.table, upd.docid, u)
-            elif u.c == 3:
-                self.updateMetaAndDeleteContent(upd.table, upd.docid, u)
+            if u["c"] == 1:
+                args = self._dclk(upd.docid, u) + self._meta(u) + Provider.contentarg(u["content"])
+                sql = Provider.sqlitemins1 + self.org + "_" + upd.table + Provider.sqlitemins2
+            elif u["c"] == 2:
+                args = self._meta(u) + self._dclk(upd.docid, u)
+                sql = Provider.sqlitemupd1 + self.org + "_" + upd.table + Provider.sqlitemupd2a
+            elif u["c"] == 3:
+                args = self._meta(u) + (None, None) + self._dclk(upd.docid, u)      
+                sql = Provider.sqlitemupd1 + self.org + "_" + upd.table + Provider.sqlitemupd2b
             else:
-                self.updateMetaAndContent(upd.table, upd.docid, u)
+                args = self._meta(u) + Provider.contentarg(u["content"]) + self._dclk(upd.docid, u)
+                sql = Provider.sqlitemupd1 + self.org + "_" + upd.table + Provider.sqlitemupd2b
+            self._sql(sql, args)
         
         for idx in upd.indexes.values():
             # {"name":n, "isList":idx.isList(), "kn":self._descr.keys, "cols":idx.columns, "updates":[]}
@@ -376,10 +463,24 @@ class Provider:
             # updates : {"ird":ird, "keys":self._keys, "val": newv if ird != 3 else None}
             if idx.isList:
                 for ui in idx.updates:
-                    self.setMultipleIndex(idx.n, idx.ird, upd.docid, idx.kns, idx.cols, ui.keys, ui.val)
+                    nbi += 1
+                    if idx["ird"] == 1:        # insert
+                        self._insidx(idx["n"], idx["cols"], idx["kns"], upd.docid, ui["keys"], ui["val"])
+                    elif idx["ird"] == 2:      # replace
+                        self._delidx(idx["n"], idx["kns"], upd.docid, ui["keys"])
+                        self._insidx(idx["n"], idx["cols"], idx["kns"], upd.docid, ui["keys"], ui["val"])
+                    else:               # delete
+                        self._delidx(idx["n"], idx["kns"], upd.docid, ui["keys"])
             else:
                 for ui in idx.updates:
-                    self.setSingleIndex(idx.n, idx.ird, upd.docid, idx.kns, idx.cols, ui.keys, ui.val)
+                    nbi += 1
+                    if idx["ird"] == 1:        # insert
+                        self._insidx(idx["n"], idx["cols"], idx["kns"], upd.docid, ui["keys"], (ui["val"],))
+                    elif idx["ird"] == 2:      # replace
+                        self._updidx(idx["n"], idx["cols"], idx["kns"], upd.docid, ui["keys"], ui["val"])
+                    else:               # delete
+                        self._delidx(idx["n"], idx["kns"], upd.docid, ui["keys"])
+            return nbi
         
     def validation(self, vl):
         """
@@ -401,6 +502,10 @@ class Provider:
             self.lockHdr(upd.table, upd.docid, 0)
         for upd in vl.upd[4]:
             self.lockHdr(upd.table, upd.docid, vl.version)
+            
+        nbi = 0
+        for i in range(4):
+            nbi += len(vl.upd[i])
         
         for descr, docid in vl.upd[0]:
             self.purge(descr, docid)
@@ -408,10 +513,12 @@ class Provider:
             self.purge(upd.descr, docid)
             
         for upd in vl.upd[2]:
-            self.IUDitems(upd)
+            nbi += self.IUDitems(upd)
         for upd in vl.upd[3]:
-            self.IUDitems(upd)
+            nbi += self.IUDitems(upd)
         for upd in vl.upd[4]:
-            self.IUDitems(upd)
+            nbi += self.IUDitems(upd)
         
+        self.connection.commit()
+        return nbi
         

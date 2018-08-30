@@ -248,10 +248,12 @@ class Document:
         assert (ItemClass is not None and issubclass(ItemClass, Singleton)), "ItemClass is not a subclass of Singleton"
         return ItemDescr(DocumentClass, ItemClass, code, tuple(), indexes)
     
+    """
     def check():
         for docName in Document._byCls:
             descr = Document._byCls[docName]
             assert descr.hdr is not None, "Document " + docName + " must have an hdr Singleton"
+    """
     
     def id(self):
         return self._descr.table + "/" + self.docid()
@@ -834,14 +836,10 @@ class DOperation(Operation):
         vol = 0
         for drec in lst:
             vol += drec[0].totalSize
-            del DOperation.gCache(drec[0].id())
+            del DOperation.gCache[drec[0].id()]
             if vol > mx:
                 return
 
-    def __init__(self, execCtx):
-        super().__init__(execCtx)
-        self.docCache = {}      # key id(), value: tuple (arch, age)
-        
     def _getDescr(self, clsOrTable):
         if isinstance(clsOrTable, str):
             docDescr = Document._byTable.get(clsOrTable, None)
@@ -851,7 +849,7 @@ class DOperation(Operation):
         return docDescr
 
     def _releaseDocument(self, doc):
-        del self.docCache[doc._descr.id(doc._docid)]
+        del self._docCache[doc._descr.id(doc._docid)]
         
     def getOrNew(self, clsOrTable, docid, isfull):
         assert docid is not None and isinstance(docid, str) and len(docid) > 0, "Empty docid on operation.getOrNew"
@@ -861,7 +859,7 @@ class DOperation(Operation):
             return d
         d = Document._create(descr, docid, None, 0, isfull)
         d.operation = self
-        self.docCache[descr.id(docid)] = (d, 0)
+        self._docCache[descr.id(docid)] = (d, 0)
         return d
         
     def get(self, clsOrTable, docid, age, isfull): 
@@ -871,7 +869,7 @@ class DOperation(Operation):
     
     def _get(self, descr, docid, age, isfull): 
         fid = descr.id(docid)
-        d = self.docCache.get(fid, None)
+        d = self._docCache.get(fid, None)
         if d is not None:           # document in operation cache
             assert (isfull and d.isfull) or not isfull, "An operation cannot require full and restricted state of a same document : " + id
             assert (age == 0 and d[1] == 0) or age != 0 , "An operation cannot require age > 0 and then 0 of a same document : " + id
@@ -886,8 +884,10 @@ class DOperation(Operation):
             if (isfull and arch.isfull) or not isfull:      # fullness is compatible
                 if now - lc < age * 1000:                   # age is compatible
                     d = Document._createFromArchive(arch)   # build document
-                    self.docCache[fid] = (d , age)          # store document in operation cache
+                    self._docCache[fid] = (d , age)         # store document in operation cache
                     d.operation = self
+                    self._t2 += 1
+                    self._t3 += 1 if not isfull else len(arch.items)
                     return d
                 
             # has to be refreshed from DB
@@ -898,7 +898,9 @@ class DOperation(Operation):
                 DOperation._setArchiveLastCheck(fid, now)    # set the last refresh stamp in global cache
                 d = Document._createFromArchive(arch)        # build document
                 d.operation = self
-                self.docCache[fid] = (d , age)               # store document in operation cache
+                self._docCache[fid] = (d , age)               # store document in operation cache
+                self._t2 += 1
+                self._t3 += 1 if not isfull else len(arch.items)
                 return d
             if status == 3:         # full replacement
                 newarch = delta
@@ -909,7 +911,9 @@ class DOperation(Operation):
                 raise AppExc("XCW", self.opName, self.org, fid)
             d = Document._createFromArchive(newarch)        # build document
             d.operation = self
-            self.docCache[fid] = (d, age)                   # store document in operation cache
+            self._docCache[fid] = (d, age)                   # store document in operation cache
+            self._t2 += 1
+            self._t3 += 1 if not isfull else len(newarch.items)
             return d
         # archive not found in global cache
         status, delta = self.provider.getArchive(descr.table, docid, isfull)
@@ -918,17 +922,17 @@ class DOperation(Operation):
         DOperation._storeArchive(newarch, now)          # store it in global cache
         d = Document._createFromArchive(arch)           # build document
         d.operation = self
-        self.docCache[id] = (d , age)                   # store document in operation cache
+        self._docCache[id] = (d , age)                   # store document in operation cache
         return d
     
     def validation(self):
-        if len(self.docCache) == 0:
+        if len(self._docCache) == 0:
             return
         vl = ValidationList(self.stamp)
         todo = False
         arch2del = list()
         arch2set = list()
-        for drec in self.docCache.values():
+        for drec in self._docCache.values():
             d = drec[0]
             if d._age == 0 and d._status >= 0:
                 status, arch = vl.add(d, self.stamp)
@@ -938,15 +942,56 @@ class DOperation(Operation):
                     arch2set.append(arch)
                 todo = True
         if todo:
-            self.provider.validate(vl)
+            self._t4 = self.provider.validate(vl)
             now = Stamp.epochNow()
             for fid in arch2del:
                 DOperation._removeArchive(fid, self.stamp)  # version
             for arch in arch2set:
                 DOperation._storeArchive(arch, now)  # lastGet / lastCheck  
         
-    def syncs(self, result):
-        pass
+    def syncs(self, syncs):
+        # TODO
+        return {}
+    
+    def process(self, param):
+        return None
+    
+    def __init__(self, execCtx):
+        super().__init__(execCtx)
+        self._docCache = {}      # key id(), value: tuple (arch, age)
+        self._accTkt  = AccTkt(self.stamp, execCtx.contentLength)
+        self._t2 = 0 # nombre de documents lus
+        self._t3 = 0 # nombre d'items lus
+        self._t4 = 0 # nombre d'items écrits.
+        self._t5 = 0 # nombre de tâches créées / mise à jour.
+        
+    def work(self): 
+        result = self.process(self.param)
+        self.validation()
+        if result is not None:
+            jsonResp = result.getJson()
+            if jsonResp is not None:
+                x = self.inputData.get("syncs", None)
+                if x is not None:
+                    jsonResp["syncs"] = self.syncs(json.loads(x))
+                    result.setJson(jsonResp)
+        if self._accTkt.tktid is not None:
+            self._accTkt.t[1] = result.finalLength() if result is not None else 0
+            self._accTkt.t[1] = (Stamp.epochNow() - self.stamp.epoch) / 1000
+            self._accTkt.t[2] = self._t2
+            self._accTkt.t[3] = self._t3
+            self._accTkt.t[4] = self._t4
+            self._accTkt.t[5] = self._t5
+            self._accTkt._record()
+        return result
+            
+    def recordAccData(self, tktid, lcpt, state):
+        self._accTkt.tktid = tktid
+        self._accTkt.state = state
+        for i, c in lcpt:
+            if i > 7:
+                break
+            self._accTkt.f[i] = c
             
 class ValidationList:
     def __init__(self, version):
@@ -962,9 +1007,27 @@ class ValidationList:
             self.upd[status].append(upd)
         return (status, arch)
             
-            
+class AccTkt:
+    """
+    - t0 : volume reçue dans la requête.
+    - t1 : volume sorti dans la réponse.
+    - t2 : nombre de documents lus.
+    - t3 : nombre d'items lus.
+    - t4 : nombre d'items écrits.
+    - t5 : nombre de tâches créées / mise à jour.
+    - t6 : nombre de secondes du traitement.
+    - t7 : 0
+    """
+    def __init__(self, version, cl):
+        self.t = [cl / 1000,0,0,0,0,0,0,0]
+        self.f = [0,0,0,0,0,0,0,0]
+        self.v = version
+        self.state = {}
+        self.tktid = None
     
-        
+    def _record(self):
+        pass
+        # TODO
     
             
             

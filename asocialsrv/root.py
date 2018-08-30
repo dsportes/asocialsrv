@@ -100,12 +100,15 @@ class Result:
         self.respXCH = op.respXCH if op is not None else None
         self.notFound = notFound
         self.mime = "application/octet-stream"
-        self.bytes = None
+        self.bytes = b''
         self.noCache = False
+        self.json = None
+    
+    def getJson(self):
+        return self.json;
     
     def setOptions(self, reqOrigin):
         self.origin = "*"
-        self.bytes = b''
         self.origin = reqOrigin
         return self
     
@@ -114,9 +117,8 @@ class Result:
         self.bytes = text.encode("utf-8")
         return self
 
-    def setJson(self, dictArg):
-        self.bytes = json.dumps(dictArg).encode("utf-8")
-        self.mime = "application/json"
+    def setJson(self, dictResp):
+        self.json = dictResp
         return self
 
     def setBytes(self, bytesArg, ext="application/octet-stream"):
@@ -128,12 +130,19 @@ class Result:
         self.noCache = True
         return self
 
+    def finalLength(self):
+        if self.json is not None:
+            self.bytes = json.dumps(self.json).encode("utf-8")
+            self.mime = "application/json"
+            self.json = None
+        return len(self.bytes)
+
     def headers(self):
         lst = []
         if self.noCache:
             lst.append(("Cache-control", "no-cache, no-store, must-revalidate"))
         lst.append(('Content-type', self.mime + "; charset=utf-8")) 
-        lst.append(('Content-length', str(len(self.bytes))))
+        lst.append(('Content-length', str(self.finalLength())))
         if self.origin is not None:
             lst.append(('Access-Control-Allow-Origin', self.origin))
         if self.respXCH is not None:
@@ -213,6 +222,7 @@ class ExecCtx:
 
         try:
             environ.setdefault('QUERY_STRING', '')
+            self.contentLength = environ.get("HTTP_CONTENT_LENGTH", 0)
             xch = environ.get("HTTP_X_CUSTOM_HEADER", None)
             if xch is None:
                 raise AppExc("SECORIG1")
@@ -286,6 +296,8 @@ class ExecCtx:
                 self.phase = 1
                 self.operation = self.operationClass(self)
                 result = self.operation.work()
+                if result is None:
+                    result = Result(self.operation)
                 self.operation.close()
                 return result
             except AppExc as ex:
