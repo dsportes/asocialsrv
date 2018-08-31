@@ -2,7 +2,7 @@ import pymysql.cursors
 from settings import settings
 import pymysqlpool
 from root import al, dics, AppExc, Stamp
-from document import DocumentArchive, ValidationList
+from document import DocumentArchive
 import json
 from gzip import compress, decompress
     
@@ -30,6 +30,9 @@ class Provider:
     def close(self):
         try:
             self.connection.rollback()
+        except:
+            pass
+        try:
             self.connection.close()
         finally:
             return
@@ -521,4 +524,21 @@ class Provider:
         
         self.connection.commit()
         return nbi
+
+
+class FakeOp:
+    def __init__(self):
+        self.org = "prod"
+        self.opName = "test"
+        self.stamp = Stamp.fromEpoch(Stamp.epochNow())
         
+def test():
+    op = FakeOp()
+    provider = Provider(op)
+    return provider.onoff()
+
+z, y = test()
+print("OK")
+
+
+    
