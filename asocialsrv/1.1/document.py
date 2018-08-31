@@ -1,5 +1,5 @@
 import json
-from root import Stamp, Operation, dics, AppExc
+from root import Stamp, Operation, dics, AppExc, Result
 from threading import Lock
 from settings import settings
 
@@ -264,6 +264,21 @@ class Document:
     def hdr(self):
         assert self._docid is not None, "Document " + self.id()
         return self._hdr
+    
+    def created(self):
+        return self._status >= 3
+
+    def modified(self):
+        return self._status >= 1
+
+    def deleted(self):
+        return self._status <= 0
+
+    def isexisting(self):
+        return self._status > 1
+
+    def wasexisting(self):
+        return self._status > 0
  
     def fk(self, itd, keys):
         return self.id() + "@" + (itd.code if itd is not None else "???") + str(keys)
@@ -296,8 +311,9 @@ class Document:
             del self._hdr
         if hasattr(self, "_changeditems"):
             del self._changeditems
-            
-    def _createNew(clsOrTable, docid, age, isfull): # if store_data is given, load from cache, else to create
+    
+    """
+    def _createNew(clsOrTable, docid, age, isfull): 
         if isinstance(clsOrTable, str):
             docDescr = Document._byTable.get(clsOrTable, None)
         else:
@@ -305,7 +321,8 @@ class Document:
         assert docDescr is not None, "Not registered document class / table " + clsOrTable
         assert docid is not None and isinstance(docid, str) and len(docid) > 0, "Empty docid on createNew"
         return Document._create(docDescr, docid, None, age, isfull)
-            
+    """
+    
     def _createFromArchive(arch): # if store_data is given, load from cache, else to create
         assert arch is not None and isinstance(arch, DocumentArchive), "createFromArch with no arch"
         return Document._create(arch.descr, arch.docid, arch, 0, True)
@@ -408,7 +425,15 @@ class Document:
         itd = self._descr.itemDescrByCls.get(cls.__name__, None)
         assert itd is not None, "Item not registered " + cls
         return self._getItem(itd, keys, True)
-        
+    
+    def itemkeys(self, cls):
+        assert self._docid is not None, "Document " + self.id()
+        itd = self._descr.itemDescrByCls.get(cls.__name__, None)
+        assert itd is not None, "Item not registered " + cls
+        if itd.isSingleton:
+            return []
+        return self._items[itd.code].keys()
+         
     def nbChanges(self):
         return 0 if not hasattr(self, "_changeditems") else len(self._changeditems)
     
@@ -496,6 +521,15 @@ class BaseItem:
 
     def istosave(self):
         return self._status == 0 or self._status == 0
+
+    def created(self):
+        return self._status >= 3
+
+    def modified(self):
+        return self._status >= 1
+
+    def deleted(self):
+        return self._status <= 0
 
     def isexisting(self):
         return self._status > 1
@@ -851,13 +885,13 @@ class DOperation(Operation):
     def _releaseDocument(self, doc):
         del self._docCache[doc._descr.id(doc._docid)]
         
-    def getOrNew(self, clsOrTable, docid, isfull):
+    def getOrNew(self, clsOrTable, docid):
         assert docid is not None and isinstance(docid, str) and len(docid) > 0, "Empty docid on operation.getOrNew"
         descr = self._getDescr(clsOrTable)
-        d = self._get(descr, docid, 0, isfull)
+        d = self._get(descr, docid, 0, True)
         if d is not None:
             return d
-        d = Document._create(descr, docid, None, 0, isfull)
+        d = Document._create(descr, docid, None, 0, True)
         d.operation = self
         self._docCache[descr.id(docid)] = (d, 0)
         return d
@@ -968,30 +1002,54 @@ class DOperation(Operation):
     def work(self): 
         result = self.process(self.param)
         self.validation()
-        if result is not None:
-            jsonResp = result.getJson()
-            if jsonResp is not None:
-                x = self.inputData.get("syncs", None)
-                if x is not None:
-                    jsonResp["syncs"] = self.syncs(json.loads(x))
-                    result.setJson(jsonResp)
+        """
+        Ne pas créer de result pour une task, ni syncs mais un accTkt
+        """
+        if result is None:
+            result = Result(self).setJson({})
+        jsonResp = result.getJson()
+        if jsonResp is not None:
+            x = self.inputData.get("syncs", None)
+            if x is not None:
+                jsonResp["syncs"] = self.syncs(json.loads(x))
         if self._accTkt.tktid is not None:
-            self._accTkt.t[1] = result.finalLength() if result is not None else 0
+            self._accTkt.t[1] = 0
             self._accTkt.t[1] = (Stamp.epochNow() - self.stamp.epoch) / 1000
             self._accTkt.t[2] = self._t2
             self._accTkt.t[3] = self._t3
             self._accTkt.t[4] = self._t4
             self._accTkt.t[5] = self._t5
             self._accTkt._record()
+        if jsonResp is not None:
+            if self._accTkt.tktid is not None:
+                jsonResp["accTkt"] = self._accTkt.tktid
+        if self._accTkt.tktid is not None:
+            self._accTkt.t[1] = result.finalLength()
         return result
             
-    def recordAccData(self, tktid, lcpt, state):
+    def recordAccData(self, table, tktid, lcpt, state):
         self._accTkt.tktid = tktid
+        self._accTkt.table = table
         self._accTkt.state = state
         for i, c in lcpt:
             if i > 7:
                 break
             self._accTkt.f[i] = c
+            
+    def newFromJson(self, clazz, json_data):
+        obj = clazz()
+        if json_data is not None:
+            d = json.loads(json_data)       # d is a dict
+            for var in d:
+                setattr(obj, var, d[var])
+        return obj
+    
+    def newFromDict(self, clazz, d):
+        obj = clazz()
+        if d is not None:
+            for var in d:
+                setattr(obj, var, d[var])
+        return obj
             
 class ValidationList:
     def __init__(self, version):
@@ -1024,6 +1082,7 @@ class AccTkt:
         self.v = version
         self.state = {}
         self.tktid = None
+        self.table = None
     
     def _record(self):
         pass
