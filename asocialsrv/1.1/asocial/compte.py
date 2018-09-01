@@ -27,15 +27,16 @@ class Creation(DOperation):
         if c.created():
             hdr.psrBD = p.psrBD
             hdr.hdx = 2016
+            hdr.commit()
         lk = c.itemkeys(Adherent)
         k = (p.dadh, p.nadh)
         if k not in lk:
-            a = c.getOrNew(Adherent, k)
+            a = c.itemOrNew(Adherent, k)
             a.cp = 94240
             a.np = "SPRTS"
             a.enfants = [{"dn":720717, "prn":"Cécile"}, {"dn":790401, "prn":"Emilie"}]
-    return
-
+            a.commit()
+        return None
 
 def test1():
     arch = DocumentArchive("compte", "doc1234")

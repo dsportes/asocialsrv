@@ -38,8 +38,9 @@ class Provider:
             return
     
     def SqlExc(self, sql, exc):
-        al.warn(str(exc))
-        return AppExc("XSQL1", self.operation.opName, self.org, sql, exc.message())
+        s = str(exc)
+        al.warn(s)
+        return AppExc("XSQL1", self.operation.opName, self.org, sql, s)
     
     #######################################################################
     
@@ -73,7 +74,7 @@ class Provider:
  
     #######################################################################
     """
-    CREATE TABLE `prod_item` (
+    CREATE TABLE `prod_compte` (
      `docid` varchar(128) NOT NULL COMMENT 'identifiant du document',
      `clkey` varchar(128) NOT NULL COMMENT 'classe / identifiant de l''item',
      `version` bigint(20) NOT NULL COMMENT 'version de l''item, date-heure de dernière modification',
@@ -142,20 +143,20 @@ class Provider:
         return (None, compress(b))
 
     sqlitems1 = "SELECT `clkey`, `version`, `size`, `ctime`, `dtime`, `totalsize`, `serial`, `serialGZ` FROM "
-    sqlitems2a = "_item WHERE `docid` = %s"
-    sqlitems2b = "_item WHERE `docid` = %s and `clkey` = 'hdr[]'"
-    sqlitems2c = "_item WHERE `docid` = %s and `version` > %s and `clkey` != 'hdr[]'"
+    sqlitems2a = " WHERE `docid` = %s"
+    sqlitems2b = " WHERE `docid` = %s and `clkey` = 'hdr[]'"
+    sqlitems2c = " WHERE `docid` = %s and `version` > %s and `clkey` != 'hdr[]'"
 
     sqlitems3 = "SELECT `clkey` FROM "
-    sqlitems3c = "_item WHERE `docid` = %s and `version` < %s and `clkey` != 'hdr[]' and `size` != 0"
+    sqlitems3c = " WHERE `docid` = %s and `version` < %s and `clkey` != 'hdr[]' and `size` != 0"
     
-    def getArchive(self, table, docid):
+    def getArchive(self, table, docid, isfull):
         """
-        Construit une archive complète depuis la base
+        Construit une archive depuis la base
         """
-        arch = DocumentArchive(table, docid, True)
+        arch = DocumentArchive(table, docid, isfull)
         arch.docid = docid
-        sql = Provider.sqlitems1 + self.org + "_" + table + Provider.sqlitems2a
+        sql = Provider.sqlitems1 + self.org + "_" + table + (Provider.sqlitems2a if isfull else Provider.sqlitems2b)
         try:
             nbItems = 0
             with self.connection.cursor() as cursor:
@@ -214,7 +215,7 @@ class Provider:
         
         """
         if cible.version == 0:      # cas 4 traité à part
-            return self.getArchive(cible.descr.table, cible.docid)
+            return self.getArchive(cible.descr.table, cible.docid, isfull)
         
         hdr = self.getHdr(cible.descr.table, cible.docid)
         if hdr is None:
@@ -227,7 +228,7 @@ class Provider:
 
         cts = m[2]
         if cible.ctime != cts:      # cas 4 traité à part, comme si cible n'avait rien
-            return self.getArchive(cible.descr.table, cible.docid)
+            return self.getArchive(cible.descr.table, cible.docid, isfull)
         
         arch = DocumentArchive(cible.descr.table, cible.docid, isfull)
         arch.docid = cible.docid
@@ -316,7 +317,7 @@ class Provider:
         """
         Purge les items d'un docid donné
         """
-        names = list(descr.table + "_item")
+        names = list(descr.table)
         for idx in descr.indexes:
             names.append(idx)
         
@@ -329,7 +330,7 @@ class Provider:
                 raise self.SqlExc(sql, e)
 
     sqlitems4 = "SELECT `version` FROM "
-    sqlitems4a = "_item WHERE `docid` = %s FOR UPDATE NOWAIT"
+    sqlitems4a = " WHERE `docid` = %s FOR UPDATE NOWAIT"
 
     def lockHdr(self, table, docid, version):
         """
@@ -364,11 +365,11 @@ class Provider:
 
     """
     sqlitemins1 = "INSERT INTO "
-    sqlitemins2 = "_item (`docid`, `clkey`, `version`, `size`, `ctime`, `dtime`, `totalsize`, `serial`, `serialGZ`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
+    sqlitemins2 = " (`docid`, `clkey`, `version`, `size`, `ctime`, `dtime`, `totalsize`, `serial`, `serialGZ`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
 
     sqlitemupd1 = "UPDATE "
-    sqlitemupd2a = "_item SET `version` = %s, `size` = %s, `ctime` = %s, `dtime` = %, `totalsize` = %s WHERE `docid` = %s AND `clkey` = %s"
-    sqlitemupd2b = "_item SET `version` = %s, `size` = %s, `ctime` = %s, `dtime` = %, `totalsize` = %s, `serial` = %s, `serialGZ` = %s WHERE `docid` = %s AND `clkey` = %s"
+    sqlitemupd2a = " SET `version` = %s, `size` = %s, `ctime` = %s, `dtime` = %, `totalsize` = %s WHERE `docid` = %s AND `clkey` = %s"
+    sqlitemupd2b = " SET `version` = %s, `size` = %s, `ctime` = %s, `dtime` = %, `totalsize` = %s, `serial` = %s, `serialGZ` = %s WHERE `docid` = %s AND `clkey` = %s"
     
     def _dclk(self, docid, u):
         return (docid, u["cl"] + json.dumps(u["keys"]))
@@ -460,32 +461,35 @@ class Provider:
                 sql = Provider.sqlitemupd1 + self.org + "_" + upd.table + Provider.sqlitemupd2b
             self._sql(sql, args)
         
-        for idx in upd.indexes.values():
+        for idxUpd in upd.indexes.values():
+            n = idxUpd.idx.name
+            cols = idxUpd.idx.cols
+            kns = idxUpd.idx.kns
             # {"name":n, "isList":idx.isList(), "kn":self._descr.keys, "cols":idx.columns, "updates":[]}
             # colomns : startswith("*") column of the list
             # updates : {"ird":ird, "keys":self._keys, "val": newv if ird != 3 else None}
-            if idx.isList:
-                for ui in idx.updates:
+            if idxUpd.idx.isList():
+                for ikv in idxUpd.updates:
                     nbi += 1
-                    if idx["ird"] == 1:        # insert
-                        self._insidx(idx["n"], idx["cols"], idx["kns"], upd.docid, ui["keys"], ui["val"])
-                    elif idx["ird"] == 2:      # replace
-                        self._delidx(idx["n"], idx["kns"], upd.docid, ui["keys"])
-                        self._insidx(idx["n"], idx["cols"], idx["kns"], upd.docid, ui["keys"], ui["val"])
+                    if ikv.ird == 1:        # insert
+                        self._insidx(n, cols, kns, upd.docid, ikv.keys, ikv.val)
+                    elif ikv.ird == 2:      # replace
+                        self._delidx(n, kns, upd.docid, ikv.keys)
+                        self._insidx(n, cols, kns, upd.docid, ikv.keys, ikv.val)
                     else:               # delete
-                        self._delidx(idx["n"], idx["kns"], upd.docid, ui["keys"])
+                        self._delidx(n, kns, upd.docid, ikv.keys)
             else:
-                for ui in idx.updates:
+                for ikv in idxUpd.updates:
                     nbi += 1
-                    if idx["ird"] == 1:        # insert
-                        self._insidx(idx["n"], idx["cols"], idx["kns"], upd.docid, ui["keys"], (ui["val"],))
-                    elif idx["ird"] == 2:      # replace
-                        self._updidx(idx["n"], idx["cols"], idx["kns"], upd.docid, ui["keys"], ui["val"])
+                    if ikv.ird == 1:        # insert
+                        self._insidx(n, cols, kns, upd.docid, ikv.keys, (ikv.val))
+                    elif ikv.ird == 2:      # replace
+                        self._updidx(n, cols, kns, upd.docid, ikv.keys, ikv.val)
                     else:               # delete
-                        self._delidx(idx["n"], idx["kns"], upd.docid, ui["keys"])
+                        self._delidx(n, cols, kns, upd.docid, ikv.keys)
             return nbi
         
-    def validation(self, vl):
+    def validate(self, vl):
         """
         validation de tous les documents
         status : 0:deleted, 1:unmodified, 2:modified, 3:created 4:recreated (after deletion)

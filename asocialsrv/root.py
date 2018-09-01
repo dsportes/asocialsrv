@@ -275,7 +275,7 @@ class ExecCtx:
             try:
                 self.operationClass = ExecCtx.getClass(mod, cl)
             except Exception as e:
-                raise AppExc("BOPNAME", [self.opName])
+                raise AppExc("BOPNAME", [self.opName, str(e)])
                 
         except AppExc as ex:
             err = {'err':ex.err, 'info':ex.msg, 'args':ex.args, 'phase':self.phase, 'tb':traceback.format_exc()}
@@ -559,7 +559,7 @@ al.info(dics.format("bonjour", ["Daniel", "Sportes"]))
 
 dics.set("fr", "BPARAMJSON", "param [{0}]: syntaxe JSON incorrecte {1}")
 dics.set("fr", "BURL", "url mal formée : [{0}]")
-dics.set("fr", "BOPNAME", "opération inconnue : [{0}]")
+dics.set("fr", "BOPNAME", "opération inconnue : [{0}] - Cause : [{1}]")
 dics.set("fr", "BOPINIT", "opération non instantiable : [{0}]")
 dics.set("fr", "SECORIG1", "opération rejetée car provenant d'une origine inconnue")
 dics.set("fr", "SECORIG2", "opération rejetée car provenant d'une origine non acceptée : [{0}]")
