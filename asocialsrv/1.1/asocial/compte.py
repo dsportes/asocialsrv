@@ -33,6 +33,9 @@ class Creation(DOperation):
             hdr.commit()
             
         lk = c.itemkeys(Adherent)
+        
+        lst = self.findInIndex(Compte, "enf", (720717,))
+        
         k = (p.dadh, p.nadh)
         if k not in lk:
             a = c.itemOrNew(Adherent, k)

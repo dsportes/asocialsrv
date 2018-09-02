@@ -486,7 +486,7 @@ class Provider:
                         self._updidx(n, cols, kns, upd.docid, ikv.keys, ikv.val)
                     else:               # delete
                         self._delidx(n, cols, kns, upd.docid, ikv.keys)
-            return nbi
+        return nbi
         
     def validate(self, vl):
         """
@@ -566,6 +566,25 @@ class Provider:
             self.connection.commit()
         except Exception as e:
             raise self.SqlExc(Provider.sqlacctkt, e)
+
+    def searchInIndex(self, code, rc, sc, startCols):
+        sqlx = ["SELECT "]
+        i = 0
+        for c in rc:
+            sqlx.append(("`" if i == 0 else ", `") + (c if not c.startswith("*") else c[1:]) + "`")
+            i += 1
+        sqlx.append("FROM " + self.org + "_" + code + " WHERE ")
+        i = 0
+        for c in sc:
+            sqlx.append((" `" if i == 0 else " and `") + (c if not c.startswith("*") else c[1:]) + "` = %s")
+            i += 1
+        sql = "".join(sqlx)
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(sql, startCols)
+                return cursor.fetchall()
+        except Exception as e:
+            raise self.SqlExc(sql, e)
 
 class FakeOp:
     def __init__(self):

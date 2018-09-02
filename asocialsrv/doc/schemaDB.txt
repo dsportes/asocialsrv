@@ -48,7 +48,7 @@ CREATE TABLE `prod_item` (
 
 CREATE TABLE `prod_adr` (
  `cp` int(11) NOT NULL,
- `np` int(11) NOT NULL,
+ `np` varchar(16) NOT NULL,
  `docid` varchar(32) NOT NULL,
  `da` int(11) NOT NULL,
  `na` int(11) NOT NULL,

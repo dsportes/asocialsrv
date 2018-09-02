@@ -236,8 +236,8 @@ class Document:
     _byCls = {}
     _byTable = {}
     DELHISTORYINDAYS = 30
-
-    def filter(args, cl, keys, content):
+    
+    def filterSyncItem(self, fargs, docid, cl, keys, meta, content):
         return content
     
     def register(cls, table):
@@ -902,7 +902,7 @@ class DOperation(Operation):
         assert docid is not None and isinstance(docid, str) and len(docid) > 0, "Empty docid on operation.get"
         descr = self._getDescr(clsOrTable)
         return self._get(descr, docid, age, isfull)
-    
+
     def _get(self, descr, docid, age, isfull): 
         fid = descr.id(docid)
         d = self._docCache.get(fid, None)
@@ -910,6 +910,18 @@ class DOperation(Operation):
             assert (isfull and d.isfull) or not isfull, "An operation cannot require full and restricted state of a same document : " + id
             assert (age == 0 and d[1] == 0) or age != 0 , "An operation cannot require age > 0 and then 0 of a same document : " + id
             return d[0]   # OK
+        arch = self._getArch(descr, docid, age, isfull)
+        if arch is None:
+            return None
+        d = Document._createFromArchive(arch)   # build document
+        self._docCache[fid] = (d , age)         # store document in operation cache
+        d.operation = self
+        self._t2 += 1
+        self._t3 += 1 if not isfull else len(arch.items)
+        return d
+    
+    def _getArch(self, descr, docid, age, isfull): 
+        fid = descr.id(docid)
         drec = DOperation._getArchive(fid)
         if drec is not None:        # archive found in global cache
             arch = drec[0]
@@ -919,12 +931,7 @@ class DOperation(Operation):
             lc = drec[2]        # lastCheck
             if (isfull and arch.isfull) or not isfull:      # fullness is compatible
                 if now - lc < age * 1000:                   # age is compatible
-                    d = Document._createFromArchive(arch)   # build document
-                    self._docCache[fid] = (d , age)         # store document in operation cache
-                    d.operation = self
-                    self._t2 += 1
-                    self._t3 += 1 if not isfull else len(arch.items)
-                    return d
+                    return arch
                 
             # has to be refreshed from DB
             status, delta = self.provider.getDelta(arch, isfull)
@@ -932,36 +939,33 @@ class DOperation(Operation):
                 return None
             if status == 1:         # nothing to refresh
                 DOperation._setArchiveLastCheck(fid, now)    # set the last refresh stamp in global cache
-                d = Document._createFromArchive(arch)        # build document
-                d.operation = self
-                self._docCache[fid] = (d , age)               # store document in operation cache
-                self._t2 += 1
-                self._t3 += 1 if not isfull else len(arch.items)
-                return d
+                return arch
             if status == 3:         # full replacement
                 newarch = delta
             else:
                 newarch = arch.merge(delta)
             DOperation._storeArchive(newarch, now)          # store it in global cache
-            if arch.version > self.stamp: # document plus trop récent
+            if arch.version > self.stamp:                   # document plus trop récent
                 raise AppExc("XCW", self.opName, self.org, fid)
-            d = Document._createFromArchive(newarch)        # build document
-            d.operation = self
-            self._docCache[fid] = (d, age)                   # store document in operation cache
-            self._t2 += 1
-            self._t3 += 1 if not isfull else len(newarch.items)
-            return d
+            return newarch
         # archive not found in global cache
         status, delta = self.provider.getArchive(descr.table, docid, isfull)
         if status == 0:         # document does not exist
             return None
         now = Stamp.epochNow()
         DOperation._storeArchive(delta, now)             # store it in global cache
-        d = Document._createFromArchive(delta)           # build document
-        d.operation = self
-        self._docCache[id] = (d , age)                   # store document in operation cache
-        return d
-    
+        return delta
+               
+    def findInIndex(self, DocumentClass, index, startCols):
+        assert (DocumentClass is not None and DocumentClass.__name__ in Document._byCls), "Document class is None or not registered"
+        docDescr = DocumentClass._descr
+        idx = docDescr.indexes.get(index, None)
+        assert idx is not None, "Unregistered index for " + docDescr.table
+        assert startCols is not None and isinstance(startCols, tuple) and len(startCols) <= len(idx.columns), "Starting columns not given or too many for index " + idx.name + " of "  + docDescr.table
+        sc = idx.columns[:len(startCols)]
+        rc = idx.columns[len(startCols):] + ("docid",) + idx.kns
+        return self.provider.searchInIndex(idx.name, rc, sc, startCols)
+        
     def validation(self):
         version = self.stamp.stamp
         if len(self._docCache) == 0:
@@ -988,9 +992,72 @@ class DOperation(Operation):
                 DOperation._storeArchive(arch, now)  # lastGet / lastCheck  
         
     def syncs(self, syncs):
-        # TODO
-        return {}
-    
+        rsyncs = []
+        for sync in syncs:
+            descr = Document._byTable.get(sync.table, None)
+            if descr is None or not "docid" in sync or not "ctime" in sync or not "version" in sync :
+                continue
+            docid = sync["docid"]
+            version = sync["version"]
+            ctime = sync["ctime"]
+            dtime = sync.get("dtime", -1)
+            isfull = sync.get("isfull", True)
+            fargs = sync.get("filter", None)
+            arch = self._getArch(descr, docid, 1, isfull)
+            if arch is None:
+                rsyncs.append({"table":descr.code, "docid":docid, "version":-1})
+                continue
+            if arch.version <= version:
+                rsyncs.append(sync)
+                
+            vf = arch.version
+            wk = False
+            dtf = -1
+            ctf = arch.ctime
+            if arch.dtime != -1 and arch.ctime == ctime:
+                if version >= arch.dtime:
+                    if arch.dtime < dtime:
+                        dtf = dtime
+                    else:
+                        dtf = arch.dtime
+                else:
+                    wk = True
+            rsync = {"table":descr.code, "docid":docid, "version":vf, "ctime":ctf, "dtime":dtf, "isfull":isfull}
+            if not fargs is None:
+                rsync["fargs"] = fargs
+            else:
+                fargs = {}
+            items = {}
+            rsync["items"] = items
+            if wk:
+                keys = []
+                rsync["keys"] = keys
+            hdr = arch.hdr()
+            c = descr.cls.filterSyncItem(self, fargs, docid, "hdr", tuple(), hdr[0], hdr[1])
+            items[("hdr", tuple())] = (hdr[0], c)
+            
+            for clkeys in arch.items:
+                if clkeys[0] == "hdr":
+                    continue
+                meta = hdr[0]
+                v = meta[0]
+                s = meta[1]
+                if v <= version:
+                    if wk:
+                        keys.append(clkeys)
+                    continue
+                if s != 0:
+                    c = descr.cls.filterSyncItem(self, fargs, docid, clkeys[0], clkeys[1], meta, hdr[1])
+                    items[clkeys] = (meta, c)
+                else:
+                    if not wk and dtf != -1 and v >= dtf:
+                        items[clkeys] = (meta, None)
+                
+            if "fargs" in rsync and "temp" in rsync["fargs"]:
+                del rsync["fargs"]["temp"]
+            rsyncs.append(rsync)
+        return rsyncs
+        
     def process(self, param):
         return None
     
@@ -1005,7 +1072,9 @@ class DOperation(Operation):
         
     def work(self): 
         result = self.process(self.param)
+        self.execCtx.phase = 2
         self.validation()
+        self.execCtx.phase = 3
         """
         Ne pas créer de result pour une task, ni syncs mais un accTkt
         """
