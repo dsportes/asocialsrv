@@ -222,7 +222,6 @@ class ExecCtx:
 
         try:
             environ.setdefault('QUERY_STRING', '')
-            self.contentLength = environ.get("HTTP_CONTENT_LENGTH", 0)
             xch = environ.get("HTTP_X_CUSTOM_HEADER", None)
             if xch is None:
                 raise AppExc("SECORIG1")
@@ -249,6 +248,8 @@ class ExecCtx:
             
             form = cgi.FieldStorage(fp=environ['wsgi.input'], environ=environ, keep_blank_values=1)
             if form.list is not None:
+                cl = form.headers.get("content-length", "0")
+                self.contentLength = int(cl)
                 for x in form:
                     f = form[x]
                     filename = f.filename

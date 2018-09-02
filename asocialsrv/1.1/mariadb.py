@@ -40,7 +40,7 @@ class Provider:
     def SqlExc(self, sql, exc):
         s = str(exc)
         al.warn(s)
-        return AppExc("XSQL1", self.operation.opName, self.org, sql, s)
+        return AppExc("XSQL1", [self.operation.opName, self.org, sql, s])
     
     #######################################################################
     
@@ -111,13 +111,13 @@ class Provider:
     def clkey(row):
         clkey = row["clkey"]
         i = clkey.find("[")
-        cl = clkey[i:]
-        k = json.loads(clkey[:i])
+        cl = clkey[:i]
+        k = json.loads(clkey[i:])
         return (cl, tuple(k))
 
     def meta(row, cl):
         if cl == "hdr":
-            return (row["version"], row["size"], row["ctime"], row["dtime"], row["totalSize"])
+            return (row["version"], row["size"], row["ctime"], row["dtime"], row["totalsize"])
         else:
             return (row["version"], row["size"], row["ctime"])
         
@@ -182,7 +182,7 @@ class Provider:
         except Exception as e:
             raise self.SqlExc(sql, e)
 
-    def getHdr(self, table, docid, version):
+    def getHdr(self, table, docid):
         """
         Retourne hdr : nécessaire pour savoir si le document existe
         """
@@ -191,10 +191,9 @@ class Provider:
         sql = Provider.sqlitems1 + self.org + "_" + table + Provider.sqlitems2b
         try:
             with self.connection.cursor() as cursor:
-                if cursor.execute(sql, (docid, version)) == 0:
+                if cursor.execute(sql, (docid,)) == 0:
                     return None
-                lst = cursor.fetchone()
-                row = lst[0]
+                row = cursor.fetchone()
                 meta = Provider.meta(row, "hdr")
                 arch.version = meta[0]
                 arch.dtime = meta[3]
@@ -204,7 +203,7 @@ class Provider:
         except Exception as e:
             raise self.SqlExc(sql, e)
     
-    def getDelta(self, table, cible, isfull):
+    def getDelta(self, cible, isfull):
         """
         Construit l'archive delta du document table/docid pour la mise à jour de la cible
         retourne le tuple (statut, delta)
@@ -268,7 +267,7 @@ class Provider:
             minv = dtc
         arch.dtime = dtd
         
-        sql = Provider.sqlitems1 + self.org + "_" + table + Provider.sqlitems2c
+        sql = Provider.sqlitems1 + self.org + "_" + cible.descr.table + Provider.sqlitems2c
         try:
             with self.connection.cursor() as cursor:
                 if cursor.execute(sql, (cible.docid, minv)) != 0:
@@ -297,7 +296,7 @@ class Provider:
         
         # arch.keys est le set de toutes les clkeys modifiées avant vc et existantes
         arch.keys = set()
-        sql = Provider.sqlitems3 + self.org + "_" + table + Provider.sqlitems3c
+        sql = Provider.sqlitems3 + self.org + "_" + cible.descr.table + Provider.sqlitems3c
         try:
             with self.connection.cursor() as cursor:
                 if cursor.execute(sql, (cible.docid, vc)) != 0:
@@ -342,15 +341,15 @@ class Provider:
                 if cursor.execute(sql, (docid,)) == 0:
                     if version == 0:
                         return
-                    raise AppExc("XCV", self.operation.opName, self.org, table + "/" + docid)
-                lst = cursor.fetchone()
-                v = lst[0]["version"]
+                    raise AppExc("XCV", [self.operation.opName, self.org, table + "/" + docid])
+                row = cursor.fetchone()
+                v = row["version"]
                 if v >= version:
-                    raise AppExc("XCV", self.operation.opName, self.org, table + "/" + docid)
+                    raise AppExc("XCV", [self.operation.opName, self.org, table + "/" + docid])
                 return
         except Exception as e:
             al.warn(str(e))
-            raise AppExc("XCV", self.operation.opName, self.org, table + "/" + docid)
+            raise AppExc("XCV", [self.operation.opName, self.org, table + "/" + docid])
     
     """
     `docid` varchar(128) NOT NULL COMMENT 'identifiant du document',
@@ -368,14 +367,14 @@ class Provider:
     sqlitemins2 = " (`docid`, `clkey`, `version`, `size`, `ctime`, `dtime`, `totalsize`, `serial`, `serialGZ`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
 
     sqlitemupd1 = "UPDATE "
-    sqlitemupd2a = " SET `version` = %s, `size` = %s, `ctime` = %s, `dtime` = %, `totalsize` = %s WHERE `docid` = %s AND `clkey` = %s"
-    sqlitemupd2b = " SET `version` = %s, `size` = %s, `ctime` = %s, `dtime` = %, `totalsize` = %s, `serial` = %s, `serialGZ` = %s WHERE `docid` = %s AND `clkey` = %s"
+    sqlitemupd2a = " SET `version` = %s, `size` = %s, `ctime` = %s, `dtime` = %s, `totalsize` = %s WHERE `docid` = %s AND `clkey` = %s"
+    sqlitemupd2b = " SET `version` = %s, `size` = %s, `ctime` = %s, `dtime` = %s, `totalsize` = %s, `serial` = %s, `serialGZ` = %s WHERE `docid` = %s AND `clkey` = %s"
     
     def _dclk(self, docid, u):
-        return (docid, u["cl"] + json.dumps(u["keys"]))
+        return (docid, u.cl + json.dumps(u.keys))
     
     def _meta(self, u):
-        meta = u["meta"]
+        meta = u.meta
         return meta if len(meta) == 5 else meta + (0, 0)
     
     def _sql(self, sql, args):
@@ -386,7 +385,7 @@ class Provider:
             raise self.SqlExc(sql, e)
     
     def _insidx(self, name, cols, kns, docid, keys, lval):
-        t = list("INSERT INTO " + self.org + "_" + name +"(")
+        t = list("INSERT INTO " + self.org + "_" + name +" (")
         for col in cols:
             t.append("`" + (col if not col.startswith("*") else col[1:]) + "`,")
         t.append("`docid`")
@@ -416,9 +415,9 @@ class Provider:
         t = list("UPDATE " + self.org + "_" + name +" SET ")
         t2 = []
         for col in cols:
-            t2.append("`" + (col if not col.startswith("*") else col[1:]) + "`=%s")
+            t2.append("`" + (col if not col.startswith("*") else col[1:]) + "` = %s")
         t.append(",".join(t2))
-        t.append(" WHERE `docid`=%s")
+        t.append(" WHERE `docid` = %s")
         for kn in kns:
             t.append(" and `" + kn + "` = %s")
         sql = "".join(t)
@@ -447,23 +446,23 @@ class Provider:
             nbi += 1
             # c : 1:insert meta and content, 2:update meta only, 3:update meta and delete content, 4:update meta and content
             # u {"c":c, "cl":cl, "keys":keys, "meta":meta, "content":content}
-            if u["c"] == 1:
-                args = self._dclk(upd.docid, u) + self._meta(u) + Provider.contentarg(u["content"])
+            if u.c == 1:
+                args = self._dclk(upd.docid, u) + self._meta(u) + Provider.contentarg(u.content)
                 sql = Provider.sqlitemins1 + self.org + "_" + upd.table + Provider.sqlitemins2
-            elif u["c"] == 2:
+            elif u.c == 2:
                 args = self._meta(u) + self._dclk(upd.docid, u)
                 sql = Provider.sqlitemupd1 + self.org + "_" + upd.table + Provider.sqlitemupd2a
-            elif u["c"] == 3:
+            elif u.c == 3:
                 args = self._meta(u) + (None, None) + self._dclk(upd.docid, u)      
                 sql = Provider.sqlitemupd1 + self.org + "_" + upd.table + Provider.sqlitemupd2b
             else:
-                args = self._meta(u) + Provider.contentarg(u["content"]) + self._dclk(upd.docid, u)
+                args = self._meta(u) + Provider.contentarg(u.content) + self._dclk(upd.docid, u)
                 sql = Provider.sqlitemupd1 + self.org + "_" + upd.table + Provider.sqlitemupd2b
             self._sql(sql, args)
         
         for idxUpd in upd.indexes.values():
             n = idxUpd.idx.name
-            cols = idxUpd.idx.cols
+            cols = idxUpd.idx.columns
             kns = idxUpd.idx.kns
             # {"name":n, "isList":idx.isList(), "kn":self._descr.keys, "cols":idx.columns, "updates":[]}
             # colomns : startswith("*") column of the list
@@ -482,7 +481,7 @@ class Provider:
                 for ikv in idxUpd.updates:
                     nbi += 1
                     if ikv.ird == 1:        # insert
-                        self._insidx(n, cols, kns, upd.docid, ikv.keys, (ikv.val))
+                        self._insidx(n, cols, kns, upd.docid, ikv.keys, (ikv.val,))
                     elif ikv.ird == 2:      # replace
                         self._updidx(n, cols, kns, upd.docid, ikv.keys, ikv.val)
                     else:               # delete
@@ -529,6 +528,44 @@ class Provider:
         self.connection.commit()
         return nbi
 
+    """
+    - t0 : volume reçue dans la requête.
+    - t1 : volume sorti dans la réponse.
+    - t2 : nombre de documents lus.
+    - t3 : nombre d'items lus.
+    - t4 : nombre d'items écrits.
+    - t5 : nombre de tâches créées / mise à jour.
+    - t6 : nombre de secondes du traitement.
+    - t7 : 0
+    - f0 à f7
+    - table
+    - tktid
+    - version
+    - state
+    """
+    
+    sqlacctkt = "INSERT INTO acctkt (`org`, `doctbl`, `tktid`, `version`, `state`, \
+    `t0`, `t1`, `t2`, `t3`, `t4`, `t5`, `t6`, `t7`, \
+    `f0`, `f1`, `f2`, `f3`, `f4`, `f5`, `f6`, `f7`) \
+     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE \
+     `version`= VALUES(`version`), `state` = VALUES(`state`), \
+     `t0` = `t0` + VALUES(`t0`), `t1` = `t1` + VALUES(`t1`), `t2` = `t2` + VALUES(`t2`), `t3` = `t3` + VALUES(`t3`), \
+     `t4` = `t4` + VALUES(`t4`), `t5` = `t5` + VALUES(`t5`), `t6` = `t6` + VALUES(`t6`), `t7` = `t7` + VALUES(`t7`), \
+     `f0` = `f0` + VALUES(`f0`), `f1` = `f1` + VALUES(`f1`), `f2` = `f2` + VALUES(`f2`), `f3` = `f3` + VALUES(`f3`), \
+     `f4` = `f4` + VALUES(`f4`), `f5` = `f5` + VALUES(`f5`), `f6` = `f6` + VALUES(`f6`), `f7` = `f7` + VALUES(`f7`)"
+    def setAccTkt(self, tk):
+        args = [tk.org, tk.table, tk.tktid, tk.v, tk.state]
+        for t in tk.t:
+            args.append(t)
+        for f in tk.f:
+            args.append(f)
+        try:
+            self.connection.begin()
+            with self.connection.cursor() as cursor:
+                cursor.execute(Provider.sqlacctkt, args)
+            self.connection.commit()
+        except Exception as e:
+            raise self.SqlExc(Provider.sqlacctkt, e)
 
 class FakeOp:
     def __init__(self):

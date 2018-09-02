@@ -26,8 +26,12 @@ class Creation(DOperation):
         hdr = c.hdr()
         if c.created():
             hdr.psrBD = p.psrBD
-            hdr.hdx = 2016
+            hdr.dhx = 2016
             hdr.commit()
+        else:
+            hdr.dhx = 2017
+            hdr.commit()
+            
         lk = c.itemkeys(Adherent)
         k = (p.dadh, p.nadh)
         if k not in lk:
@@ -36,6 +40,13 @@ class Creation(DOperation):
             a.np = "SPRTS"
             a.enfants = [{"dn":720717, "prn":"Cécile"}, {"dn":790401, "prn":"Emilie"}]
             a.commit()
+        else:
+            a = c.itemOrNew(Adherent, k)
+            a.np = "SPRTES"
+            a.enfants = [{"dn":720717, "prn":"Cécilou"}, {"dn":790401, "prn":"Emilie"}]
+            a.commit()       
+        
+        self.recordAccData("compte", p.idc, (0,0,0,0,0,0,0,0), json.dumps({"lastop":"Creation", "lastdhop":self.stamp.stamp}))     
         return None
 
 def test1():

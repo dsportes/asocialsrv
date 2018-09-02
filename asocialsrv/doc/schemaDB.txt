@@ -1,9 +1,36 @@
+SHOW CREATE TABLE yourTable;
+
 CREATE TABLE `onoff` (
    `org` varchar(16) NOT NULL,
    `ison` int(11) NOT NULL,
    `info` varchar(512) DEFAULT NULL,
    PRIMARY KEY (`org`)
  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+
+CREATE TABLE `acctkt` (
+ `org` varchar(16) NOT NULL,
+ `doctbl` varchar(16) NOT NULL,
+ `tktid` varchar(100) NOT NULL,
+ `version` bigint(20) NOT NULL,
+ `state` varchar(4000) NOT NULL,
+ `t0` double NOT NULL,
+ `t1` double NOT NULL,
+ `t2` bigint(20) NOT NULL,
+ `t3` bigint(20) NOT NULL,
+ `t4` bigint(20) NOT NULL,
+ `t5` bigint(20) NOT NULL,
+ `t6` double NOT NULL,
+ `t7` double NOT NULL,
+ `f0` double NOT NULL,
+ `f1` double NOT NULL,
+ `f2` double NOT NULL,
+ `f3` double NOT NULL,
+ `f4` double NOT NULL,
+ `f5` double NOT NULL,
+ `f6` double NOT NULL,
+ `f7` double NOT NULL,
+ PRIMARY KEY (`org`,`doctbl`,`tktid`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 
 CREATE TABLE `prod_item` (
  `docid` varchar(128) NOT NULL COMMENT 'identifiant du document',
@@ -39,4 +66,19 @@ CREATE TABLE `prod_enf` (
  PRIMARY KEY (`dn`,`prn`,`np`,`docid`,`da`,`na`),
  UNIQUE KEY `prod_enf_key` (`docid`,`da`,`na`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+
+CREATE TABLE `prod_psrbd` (
+ `psrbd` varchar(64) NOT NULL,
+ `docid` varchar(100) NOT NULL,
+ PRIMARY KEY (`psrbd`,`docid`),
+ UNIQUE KEY `psrbd` (`psrbd`,`docid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+
+CREATE TABLE `prod_dhx` (
+ `dhx` int(11) NOT NULL,
+ `docid` varchar(100) NOT NULL,
+ PRIMARY KEY (`dhx`,`docid`),
+ UNIQUE KEY `prod_dhx_key` (`docid`,`dhx`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+
 

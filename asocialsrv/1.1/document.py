@@ -85,10 +85,10 @@ class DocumentArchive:
         self.totalSize = 0
 
     def id(self, clkey=None):
-        return self.table + "/" + self.docid + ("" if clkey is None else "@" + clkey)
+        return self.descr.table + "/" + self.docid + ("" if clkey is None else "@" + clkey)
 
     def id2(self, cl, keys):
-        return self.table + "/" + self.docid + "@" + cl +str(keys)
+        return self.descr.table + "/" + self.docid + "@" + cl +str(keys)
         
     def addItem(self, cl, keys, meta, content):
         if cl == "hdr":
@@ -812,7 +812,7 @@ class BaseItem:
             if ui is not None:
                 oldv = oldi.get(idx, None) if oldi is not None else None
                 newv = newi.get(idx, None) if newi is not None else None
-                ird = 0 if oldv is None and newv is None else (3 if oldv is not None and newv is None else (1 if oldv is None and newv is not None else (2 if not self._eq(oldv, newv, ui["isList"]) else 0)))
+                ird = 0 if oldv is None and newv is None else (3 if oldv is not None and newv is None else (1 if oldv is None and newv is not None else (2 if not self._eq(oldv, newv, ui.idx.isList()) else 0)))
                 if ird != 0:
                     ui.addIdxVal(ird, self._keys, newv if ird != 3 else None)
          
@@ -847,15 +847,16 @@ class DOperation(Operation):
     def _storeArchive(arch, stamp):
         with DOperation.gCacheLock:
             tsAfter = arch.totalSize
+            tsBefore = 0
             drec = DOperation.gCache.get(arch.id(), None)
             if drec != None:
                 if drec[0].version > arch.version:
                     return
                 tsBefore = drec[0].totalSize
-                DOperation.gCache[arch.id()] = (arch, stamp, stamp)
-                DOperation.gCacheSize += tsAfter - tsBefore
-                if tsAfter > tsBefore and DOperation.gCacheSize > settings.MAXCACHESIZE:
-                    DOperation._cleanUp()
+            DOperation.gCache[arch.id()] = (arch, stamp, stamp)
+            DOperation.gCacheSize += tsAfter - tsBefore
+            if tsAfter > tsBefore and DOperation.gCacheSize > settings.MAXCACHESIZE:
+                DOperation._cleanUp()
 
     def _removeArchive(fid, version):
         with DOperation.gCacheLock:
@@ -912,7 +913,7 @@ class DOperation(Operation):
         drec = DOperation._getArchive(fid)
         if drec is not None:        # archive found in global cache
             arch = drec[0]
-            if arch.version > self.stamp: # document plus trop récent
+            if arch.version > self.stamp.stamp: # document plus trop récent
                 raise AppExc("XCW", self.opName, self.org, fid)
             now = drec[1]       # lastGet
             lc = drec[2]        # lastCheck
@@ -954,8 +955,9 @@ class DOperation(Operation):
         status, delta = self.provider.getArchive(descr.table, docid, isfull)
         if status == 0:         # document does not exist
             return None
-        DOperation._storeArchive(newarch, now)          # store it in global cache
-        d = Document._createFromArchive(arch)           # build document
+        now = Stamp.epochNow()
+        DOperation._storeArchive(delta, now)             # store it in global cache
+        d = Document._createFromArchive(delta)           # build document
         d.operation = self
         self._docCache[id] = (d , age)                   # store document in operation cache
         return d
@@ -995,7 +997,7 @@ class DOperation(Operation):
     def __init__(self, execCtx):
         super().__init__(execCtx)
         self._docCache = {}      # key id(), value: tuple (arch, age)
-        self._accTkt  = AccTkt(self.stamp, execCtx.contentLength)
+        self._accTkt  = AccTkt(self.org, self.stamp.stamp, execCtx.contentLength)
         self._t2 = 0 # nombre de documents lus
         self._t3 = 0 # nombre d'items lus
         self._t4 = 0 # nombre d'items écrits.
@@ -1015,25 +1017,27 @@ class DOperation(Operation):
             if x is not None:
                 jsonResp["syncs"] = self.syncs(json.loads(x))
         if self._accTkt.tktid is not None:
-            self._accTkt.t[1] = 0
-            self._accTkt.t[1] = (Stamp.epochNow() - self.stamp.epoch) / 1000
+            t1 = Stamp.epochNow()
+            t0 = self.stamp.epoch
+            self._accTkt.t[1] = 0.0
             self._accTkt.t[2] = self._t2
             self._accTkt.t[3] = self._t3
             self._accTkt.t[4] = self._t4
             self._accTkt.t[5] = self._t5
-            self._accTkt._record()
+            self._accTkt.t[6] = (t1 - t0) / 1000
         if jsonResp is not None:
             if self._accTkt.tktid is not None:
                 jsonResp["accTkt"] = self._accTkt.tktid
         if self._accTkt.tktid is not None:
-            self._accTkt.t[1] = result.finalLength()
+            self._accTkt.t[1] = result.finalLength() / 1000
+            self.provider.setAccTkt(self._accTkt)
         return result
             
     def recordAccData(self, table, tktid, lcpt, state):
         self._accTkt.tktid = tktid
         self._accTkt.table = table
         self._accTkt.state = state
-        for i, c in lcpt:
+        for i, c in enumerate(lcpt):
             if i > 7:
                 break
             self._accTkt.f[i] = c
@@ -1078,19 +1082,12 @@ class AccTkt:
     - t6 : nombre de secondes du traitement.
     - t7 : 0
     """
-    def __init__(self, version, cl):
-        self.t = [cl / 1000,0,0,0,0,0,0,0]
-        self.f = [0,0,0,0,0,0,0,0]
+    def __init__(self, org, version, cl):
+        self.t = [cl / 1000,0.0,0,0,0,0,0,0.0]
+        self.f = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]
+        self.org = org
         self.v = version
         self.state = {}
         self.tktid = None
         self.table = None
     
-    def _record(self):
-        pass
-        # TODO
-    
-            
-            
-        
-        
