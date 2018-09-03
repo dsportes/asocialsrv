@@ -32,18 +32,14 @@ CREATE TABLE `acctkt` (
  PRIMARY KEY (`org`,`doctbl`,`tktid`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 
-CREATE TABLE `prod_item` (
- `docid` varchar(128) NOT NULL COMMENT 'identifiant du document',
- `clkey` varchar(128) NOT NULL COMMENT 'classe / identifiant de l''item',
- `version` bigint(20) NOT NULL COMMENT 'version de l''item, date-heure de dernière modification',
+CREATE TABLE `prod_compte` (
+ `itkey` varchar(500) NOT NULL,
+ `version` bigint(20) NOT NULL,
+ `dtcas` bigint(20) NOT NULL,
  `size` int(11) NOT NULL,
- `ctime` bigint(20) DEFAULT NULL,
- `dtime` bigint(20) DEFAULT NULL,
- `totalsize` int(11) DEFAULT NULL,
- `serial` varchar(4000) DEFAULT NULL COMMENT 'sérialiastion de l''item',
- `serialGZ` blob COMMENT 'sérialisation gzippée de l''item',
- PRIMARY KEY (`docid`,`clkey`) USING BTREE,
- UNIQUE KEY `version` (`docid`,`version`,`size`,`clkey`) USING BTREE
+ `serial` varchar(4000) DEFAULT NULL,
+ `serialGZ` blob DEFAULT NULL,
+ PRIMARY KEY (`itkey`, `version`, `dtcas`, `size`) USING BTREE,
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 
 CREATE TABLE `prod_adr` (
