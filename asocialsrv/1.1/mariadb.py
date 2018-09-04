@@ -75,17 +75,13 @@ class Provider:
     #######################################################################
     """
     CREATE TABLE `prod_compte` (
-     `docid` varchar(128) NOT NULL COMMENT 'identifiant du document',
-     `clkey` varchar(128) NOT NULL COMMENT 'classe / identifiant de l''item',
-     `version` bigint(20) NOT NULL COMMENT 'version de l''item, date-heure de dernière modification',
+     `itkey` varchar(500) NOT NULL,
+     `version` bigint(20) NOT NULL,
+     `dtcas` bigint(20) NOT NULL,
      `size` int(11) NOT NULL,
-     `ctime` bigint(20) DEFAULT NULL,
-     `dtime` bigint(20) DEFAULT NULL,
-     `totalsize` int(11) DEFAULT NULL,
-     `serial` varchar(4000) DEFAULT NULL COMMENT 'sérialiastion de l''item',
-     `serialGZ` blob COMMENT 'sérialisation gzippée de l''item',
-     PRIMARY KEY (`docid`,`clkey`) USING BTREE,
-     UNIQUE KEY `version` (`docid`,`version`,`size`,`clkey`) USING BTREE
+     `serial` varchar(4000) DEFAULT NULL,
+     `serialGZ` blob DEFAULT NULL,
+     PRIMARY KEY (`itkey`, `version`, `dtcas`, `size`) USING BTREE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     
     Soit vc et dtc les version et dtime de la cible :  vc >= dtc  
@@ -93,40 +89,33 @@ class Provider:
         Soit vd et dtd les version et dtime du delta (finalement de la nouvelle archive) : vd = vs  
         Les items du delta contiennent toujours tous les items créés ou modifiés après vc  
         On peut avoir les successions temporelles suivantes :
-        - cas 1 : vs vc dtc dts
-            - dtd = dtc
-            - items contient les suppressions entre dtc et vc
-        - cas 2 : vs vc dts dtc
-            - dtd = dts 
-            - items contient les suppressions entre dts et vc 
-        - cas 3 : vs dts vc dtc
-            - dtd = dts
-            - keys contient les clkeys des items modifiés après vc 
-        - cas 4 : vc = 0 (dtc = 0)
-            - dtd = dts
-            - items contient les suppressions depuis dts, c'est à dire toutes
-    
+        - cas 1 : vb va dtb
+            - items contient les suppressions entre dtb et vb et les créations / modifications / suppressions après va
+        - cas 2 : vb dtb va
+            - items contient les items créés / modifiés / supprimés après va
+            - keys contient les clkeys des items modifiés et existants avant va 
     """
 
-    def clkey(row):
-        clkey = row["clkey"]
-        i = clkey.find("[")
-        cl = clkey[:i]
-        k = json.loads(clkey[i:])
-        return (cl, tuple(k))
-
-    def meta(row, cl):
-        if cl == "hdr":
-            return (row["version"], row["size"], row["ctime"], row["dtime"], row["totalsize"])
-        else:
-            return (row["version"], row["size"], row["ctime"])
-        
+    def clkeys(row):
+        s = row["itkey"]
+        i = s.find(" ")
+        if i == -1:
+            return ("hdr", ())
+        j = s.find("[", i)
+        if j == -1:
+            return (s[i + 1:], ())
+        k = json.loads(s[j:])
+        return (s[i + 1:j], tuple(k))
+    
+    def meta(row):
+        return (row["version"], row["dtcas"], row["size"])
+    
     def content(row):
         try:
             s = row["serial"]
             if s is not None:
                 return s
-            b = row["serialGZ"]
+            b = row["serialgz"]
             if b is None:
                 return ""
             t = decompress(b)
@@ -142,13 +131,15 @@ class Provider:
         b = content.encode("utf-8")
         return (None, compress(b))
 
-    sqlitems1 = "SELECT `clkey`, `version`, `size`, `ctime`, `dtime`, `totalsize`, `serial`, `serialGZ` FROM "
-    sqlitems2a = " WHERE `docid` = %s"
-    sqlitems2b = " WHERE `docid` = %s and `clkey` = 'hdr[]'"
-    sqlitems2c = " WHERE `docid` = %s and `version` > %s and `clkey` != 'hdr[]'"
-
-    sqlitems3 = "SELECT `clkey` FROM "
-    sqlitems3c = " WHERE `docid` = %s and `version` < %s and `clkey` != 'hdr[]' and `size` != 0"
+    sqlitems1a = "SELECT `version`, `dtcas`, `size`, `serial`, `serialgz` FROM "
+    sqlitems1b = "SELECT `itkey`, `version`, `dtcas`, `size`, `serial`, `serialgz` FROM "
+    sqlitems1c = "SELECT `clkey` FROM "
+    sqlitems1d = "SELECT `itkey`, `version`, `dtcas`, `size`, IF(`dtcas` < 0, NULL, `serial`) AS `serial`, IF(`dtcas` < 0, NULL, `serialgz`) AS `serialgz` FROM "
+    
+    sqlitems2a = " WHERE `itkey` = %s"
+    sqlitems2b = " WHERE `itkey` >= %s and `ìtkey` <= %s"
+    sqlitems2c = " WHERE `itkey` >= %s and `ìtkey` <= %s AND `version` <= %s AND `dtcas` >= 0"
+    sqlitems2d = " WHERE `itkey` >= %s and `ìtkey` <= %s AND `version` > %s"
     
     def getArchive(self, table, docid, isfull):
         """
@@ -156,25 +147,18 @@ class Provider:
         """
         arch = DocumentArchive(table, docid, isfull)
         arch.docid = docid
-        sql = Provider.sqlitems1 + self.org + "_" + table + (Provider.sqlitems2a if isfull else Provider.sqlitems2b)
+        sql = Provider.sqlitems1b + self.org + "_" + table + (Provider.sqlitems2b if isfull else Provider.sqlitems2a)
         try:
             nbItems = 0
             with self.connection.cursor() as cursor:
-                nbItems = cursor.execute(sql, (docid,))
+                nbItems = cursor.execute(sql, (docid, docid + " zzzzzzzz"))
                 lst = cursor.fetchall()
                 for row in lst:
-                    cl, keys = Provider.clkey(row)
+                    cl, keys = Provider.clkeys(row)
                     itd = arch.descr.itemDescrByCode.get(cl, None)
                     if itd is None or (not itd.isSingleton and len(itd.keys) != len(keys)):
                         continue
-                    meta = Provider.meta(row, cl)
-                    if cl == "hdr":
-                        arch.version = meta[0]
-                        arch.ctime = meta[2]
-                        arch.dtime = meta[3]
-                        arch.totalSize = meta[4]
-                    content = Provider.content(row)
-                    arch.addItem(cl, keys, meta, content)
+                    arch.addItem(cl, keys, Provider.meta(row), Provider.content(row))
             if nbItems == 0:
                 return (0, None)
             else:
@@ -188,129 +172,81 @@ class Provider:
         """
         arch = DocumentArchive(table, docid, False)
         arch.docid = docid
-        sql = Provider.sqlitems1 + self.org + "_" + table + Provider.sqlitems2b
+        sql = Provider.sqlitems1a + self.org + "_" + table + Provider.sqlitems2a
         try:
             with self.connection.cursor() as cursor:
                 if cursor.execute(sql, (docid,)) == 0:
                     return None
                 row = cursor.fetchone()
-                meta = Provider.meta(row, "hdr")
-                arch.version = meta[0]
-                arch.dtime = meta[3]
-                arch.totalSize = meta[4]
-                content = Provider.content(row)
-                return (meta, content)
+                arch.addItem("hdr", (), Provider.meta(row), Provider.content(row))
+            return arch
         except Exception as e:
             raise self.SqlExc(sql, e)
     
-    def getDelta(self, cible, isfull):
+    def getDelta(self, old, isfull):
         """
-        Construit l'archive delta du document table/docid pour la mise à jour de la cible
+        Construit l'archive delta du document table/docid pour la mise à jour depuis old
         retourne le tuple (statut, delta)
-        statut vaut : 0-document inconnu, 1-cible à jour, 2:delta, 3:complet (pas delta)
-        Avant lecture du hdr dans la base on ne connaît ni vs ni dts
-        Les cas 1 et 2 peuvent se traiter en un select des items modifiés après dtc
-        Le cas 3 nécessite un second select pour construire keys
+        statut vaut : 0-document inconnu, 1-old à jour, 2:delta (old -> base)
+        Lecture du hdr pour savoir si le document existe et avoir sa version dtcas
+        - cas not wk : vb va dtb
+            - items contient les suppressions entre dtb et vb et les créations / modifications / suppressions après va
+        - cas wk : vb dtb va
+            - items contient les items créés / modifiés / supprimés après va
+            - keys contient les clkeys des items modifiés et existants avant va 
         
         """
-        if cible.version == 0:      # cas 4 traité à part
-            return self.getArchive(cible.descr.table, cible.docid, isfull)
-        
-        hdr = self.getHdr(cible.descr.table, cible.docid)
-        if hdr is None:
+        arch = self.getHdr(old.descr.table, old.docid)
+        if arch is None:
             return (0, None)
 
-        m = hdr[0]
-        vs = m[0]
-        if vs <= cible.version:
+        if arch.version <= old.version:
             return (1, None)
-
-        cts = m[2]
-        if cible.ctime != cts:      # cas 4 traité à part, comme si cible n'avait rien
-            return self.getArchive(cible.descr.table, cible.docid, isfull)
-        
-        arch = DocumentArchive(cible.descr.table, cible.docid, isfull)
-        arch.docid = cible.docid
-        arch.version = vs
-        arch.totalSize = m[4]
-        arch.ctime = cts
-        arch.dtime = vs
-        arch.addItem3("hdr", tuple(), m, hdr[1])
         
         if not isfull:  # cas traité à part : seul hdr
             return (2, arch)
         
-        """
-        - cas 1 : vs vc dtc dts
-            - dtd = dtc
-            - items contient les suppressions entre dtc et vc
-        - cas 2 : vs vc dts dtc
-            - dtd = dts 
-            - items contient les suppressions entre dts et vc 
-        - cas 3 : vs dts vc dtc
-            - dtd = dts
-            - keys contient les clkeys des items modifiés après vc 
-        """
-        dts = m[3]
-        vc = cible.version
-        dtc = cible.dtime
-        dtd = dts
-        cas = 3
-        if vc <= dts:
-            minv = vc
-        elif dtc < dts:
-            cas = 2
-            minv = dts
-        else:
-            cas = 1
-            dtd = dtc
-            minv = dtc
-        arch.dtime = dtd
-        
-        sql = Provider.sqlitems1 + self.org + "_" + cible.descr.table + Provider.sqlitems2c
+        wk = old.version < arch.dtcas
+        minv = arch.dtcas if wk else old.version
+        sql = Provider.sqlitems1d + self.org + "_" + old.descr.table + Provider.sqlitems2d
         try:
             with self.connection.cursor() as cursor:
-                if cursor.execute(sql, (cible.docid, minv)) != 0:
+                if cursor.execute(sql, (old.docid, old.docid + " zzzzzzzz", minv)) != 0:
                     lst = cursor.fetchall()
                     for row in lst:
-                        cl, keys = Provider.clkey(row)
+                        cl, keys = Provider.clkeys(row)
                         itd = arch.descr.itemDescrByCode.get(cl, None)
                         if itd is None or (not itd.isSingleton and len(itd.keys) != len(keys)):
                             continue
-                        meta = Provider.meta(row, cl)
-                        content = Provider.content(row)
-                        v = meta[0]
-                        inc = meta[0] != 0
-                        if not inc:     # deleted : l'inclure ou non
-                            if cas == 1:
-                                inc = v > dtc and v < vc
-                            elif cas == 2:
-                                inc = v > dts and v < vc
-                        if inc:    
-                            arch.addItem(cl, keys, meta, content)
+                        meta = Provider.meta(row)
+                        if not wk:
+                            if meta[1] < 0: # del
+                                arch.addItem(cl, keys, meta, None)
+                            else: # cre maj
+                                if meta[0] > old.version:
+                                    arch.addItem(cl, keys, meta, Provider.content(row))
+                        else:
+                            arch.addItem(cl, keys, meta, Provider.content(row))
         except Exception as e:
             raise self.SqlExc(sql, e)
         
-        if cas != 3:
-            return (2, arch)
-        
-        # arch.keys est le set de toutes les clkeys modifiées avant vc et existantes
-        arch.keys = set()
-        sql = Provider.sqlitems3 + self.org + "_" + cible.descr.table + Provider.sqlitems3c
-        try:
-            with self.connection.cursor() as cursor:
-                if cursor.execute(sql, (cible.docid, vc)) != 0:
-                    lst = cursor.fetchall()
-                    for row in lst:
-                        arch.keys.add(row["clkey"])
-        except Exception as e:
-            raise self.SqlExc(sql, e)
+        if wk:
+            # keys contient les clkeys des items modifiés et existants avant va
+            arch.keys = set()
+            sql = Provider.sqlitems1c + self.org + "_" + old.descr.table + Provider.sqlitems2c
+            try:
+                with self.connection.cursor() as cursor:
+                    if cursor.execute(sql, (old.docid, old.docid + " zzzzzzzz", minv)) != 0:
+                        lst = cursor.fetchall()
+                        for row in lst:
+                            arch.keys.add(Provider.clkeys(row))
+            except Exception as e:
+                raise self.SqlExc(sql, e)
         return (2, arch)
 
     ####################################################################################
 
     sqlpurge = "DELETE FROM "
-    sqlpurgea = " WHERE `docid` = %s"
 
     def purge(self, descr, docid):
         """
@@ -321,10 +257,10 @@ class Provider:
             names.append(idx)
         
         for n in names:
-            sql = Provider.sqlpurge + self.org + "_" + n + Provider.sqlpurgea
+            sql = Provider.sqlpurge + self.org + "_" + n + Provider.sqlitems2b
             try:
                 with self.connection.cursor() as cursor:
-                    cursor.execute(sql, (docid,))
+                    cursor.execute(sql, (docid, docid + " zzzzzzzz"))
             except Exception as e:
                 raise self.SqlExc(sql, e)
 

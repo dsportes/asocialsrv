@@ -38,8 +38,8 @@ CREATE TABLE `prod_compte` (
  `dtcas` bigint(20) NOT NULL,
  `size` int(11) NOT NULL,
  `serial` varchar(4000) DEFAULT NULL,
- `serialGZ` blob DEFAULT NULL,
- PRIMARY KEY (`itkey`, `version`, `dtcas`, `size`) USING BTREE,
+ `serialgz` blob DEFAULT NULL,
+ PRIMARY KEY (`itkey`, `version`, `dtcas`, `size`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 
 CREATE TABLE `prod_adr` (
@@ -60,7 +60,7 @@ CREATE TABLE `prod_enf` (
  `da` int(11) NOT NULL,
  `na` int(11) NOT NULL,
  PRIMARY KEY (`dn`,`prn`,`np`,`docid`,`da`,`na`),
- UNIQUE KEY `prod_enf_key` (`docid`,`da`,`na`)
+ INDEX `prod_enf_key` (`docid`,`da`,`na`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 
 CREATE TABLE `prod_psrbd` (

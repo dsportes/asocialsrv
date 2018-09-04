@@ -2,7 +2,6 @@ import json
 from root import Stamp, Operation, dics, AppExc, Result
 from threading import Lock
 from settings import settings
-from _socket import AF_IRDA
 
 dics.set("fr", "XCW", "Trop de contention détectée en phase work. Opération:{0} Org:{1} Document:{2} ")
 
@@ -91,7 +90,6 @@ class DocumentArchive:
         return self.descr.table + "/" + self.docid + "@" + cl +str(keys)
         
     def addItem(self, cl, keys, meta, content):
-        assert len(meta) == 3, "Invalid meta size for " + self.id2(cl, keys)
         if cl == "hdr":
             self.version = meta[0]
             self.dtcas = meta[1]
