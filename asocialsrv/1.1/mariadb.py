@@ -1,25 +1,32 @@
-import pymysql.cursors
+from pymysql import Connection, connect, cursors
 from settings import settings
 import pymysqlpool
 from root import al, dics, AppExc, Stamp
-from document import DocumentArchive
+from document import DocumentArchive, DocumentDescr, LocalUpdate, Update, ValidationList, AccTkt, Meta, ClKeys
 import json
 from gzip import compress, decompress
+from typing import Dict, Tuple, Any, Iterable
     
+class OnOff:
+    def __init__(self, ison:int, info:str) -> OnOff:
+        self.ison = ison
+        self.info = info
+Row = Dict[str, Any]
+
 class Provider:
     dics.set("fr", "XSQL1", "Incident d'accès à la base de données. Opération:{0} Org:{1} SQL:{2} Cause:{3}")
     dics.set("fr", "XCV", "Trop de contention détectée à la validation. Opération:{0} Org:{1} Document:{2} ")
     
-    def create_conn():
-        return pymysql.connect(host=settings.db['host'], db=settings.db['db'], user=settings.db['user'], password=settings.db['password'],
-                             charset='utf8mb4', cursorclass=pymysql.cursors.DictCursor)
+    def _create_conn() -> Connection:
+        return connect(host=settings.db['host'], db=settings.db['db'], user=settings.db['user'], password=settings.db['password'],
+                             charset='utf8mb4', cursorclass=cursors.DictCursor)
 
-    pool = pymysqlpool.Pool(create_instance=create_conn, max_count=settings.db['poolSize'], timeout=settings.db['timeOut'])
+    pool = pymysqlpool.Pool(create_instance=_create_conn, max_count=settings.db['poolSize'], timeout=settings.db['timeOut'])
     lapseRefreshOnOff = 300000
     onofStamp = Stamp()
-    onoffDict = {}
+    onoffrep = {}
     
-    def __init__(self, operation):
+    def __init__(self, operation) -> Provider:
         try:
             self.connection = Provider.pool.get()
             self.operation = operation
@@ -27,7 +34,7 @@ class Provider:
         except Exception as e:
             AppExc("XSQLCONX", [operation.opName, operation.org, e.message()])
     
-    def close(self):
+    def close(self) -> None:
         try:
             self.connection.rollback()
         except:
@@ -37,15 +44,16 @@ class Provider:
         finally:
             return
     
-    def SqlExc(self, sql, exc):
+    def SqlExc(self, sql, exc) -> AppExc:
         s = str(exc)
         al.warn(s)
         return AppExc("XSQL1", [self.operation.opName, self.org, sql, s])
     
     #######################################################################
     
+    
     sqlonoff = "SELECT `org`, `ison`, `info` FROM `onoff`"
-    def onoff(self):
+    def onoff(self) -> Tuple(OnOff, OnOff):
         """
         Retourne le couple des deux entrées de la table ONOFF,
         a) celle du serveur lui-même z -> infoGen
@@ -62,11 +70,11 @@ class Provider:
                     lst = cursor.fetchall()
                     d = {}
                     for x in lst:
-                        d[x['org']] = {'ison':x['ison'], 'info':x.get('info', "")}
+                        d[x['org']] = OnOff(x['ison'], x.get('info', ""))
                     Provider.onoffDict = d
                     Provider.onoffStamp = self.operation.stamp
             d = Provider.onoffDict
-            z = d.get("z", {'ison':-1, 'info':""})
+            z = d.get("z", OnOff(-1, ""))
             y = d.get(self.operation.org, {'ison':-1, 'info':""})
             return (z, y)
         except Exception as e:
@@ -83,20 +91,9 @@ class Provider:
      `serialGZ` blob DEFAULT NULL,
      PRIMARY KEY (`itkey`, `version`, `dtcas`, `size`) USING BTREE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    
-    Soit vc et dtc les version et dtime de la cible :  vc >= dtc  
-        Soit vs et dts les version et dtime de la source : vs >= dts et vc >= vs  
-        Soit vd et dtd les version et dtime du delta (finalement de la nouvelle archive) : vd = vs  
-        Les items du delta contiennent toujours tous les items créés ou modifiés après vc  
-        On peut avoir les successions temporelles suivantes :
-        - cas 1 : vb va dtb
-            - items contient les suppressions entre dtb et vb et les créations / modifications / suppressions après va
-        - cas 2 : vb dtb va
-            - items contient les items créés / modifiés / supprimés après va
-            - keys contient les clkeys des items modifiés et existants avant va 
     """
 
-    def clkeys(row):
+    def clkeys(row: Row) -> ClKeys:
         s = row["itkey"]
         i = s.find(" ")
         if i == -1:
@@ -107,10 +104,10 @@ class Provider:
         k = json.loads(s[j:])
         return (s[i + 1:j], tuple(k))
     
-    def meta(row):
+    def meta(row: Row) -> Meta:
         return (row["version"], row["dtcas"], row["size"])
     
-    def content(row):
+    def content(row: Row) -> str:
         try:
             s = row["serial"]
             if s is not None:
@@ -123,7 +120,7 @@ class Provider:
         except:
             return ""
         
-    def contentarg(content):
+    def contentarg(content:str) -> Tuple[str, bytes]:
         if content is None or len(content) == 0:
             return (None, None)
         if len(content) < 2000:
@@ -131,27 +128,28 @@ class Provider:
         b = content.encode("utf-8")
         return (None, compress(b))
 
-    sqlitems1a = "SELECT `version`, `dtcas`, `size`, `serial`, `serialgz` FROM "
-    sqlitems1b = "SELECT `itkey`, `version`, `dtcas`, `size`, `serial`, `serialgz` FROM "
+    sqlitems1a = "SELECT `itkey`, `version`, `dtcas`, `size`, `serial`, `serialgz` FROM "
+    sqlitems1b = "SELECT `version`, `dtcas`, `size`, IF(`version` = %s, NULL, `serial`) AS `serial`, IF(`version` = %s, NULL, `serialgz`) AS `serialgz` FROM "
     sqlitems1c = "SELECT `clkey` FROM "
-    sqlitems1d = "SELECT `itkey`, `version`, `dtcas`, `size`, IF(`dtcas` < 0, NULL, `serial`) AS `serial`, IF(`dtcas` < 0, NULL, `serialgz`) AS `serialgz` FROM "
-    
+    sqlitems1g = "SELECT `version` FROM "
+
     sqlitems2a = " WHERE `itkey` = %s"
     sqlitems2b = " WHERE `itkey` >= %s and `ìtkey` <= %s"
-    sqlitems2c = " WHERE `itkey` >= %s and `ìtkey` <= %s AND `version` <= %s AND `dtcas` >= 0"
-    sqlitems2d = " WHERE `itkey` >= %s and `ìtkey` <= %s AND `version` > %s"
+    sqlitems2c = " WHERE `itkey` = %s  AND `version` > %s"
+    sqlitems2d = " WHERE `itkey` >= %s and `ìtkey` <= %s AND ((`version` > %s AND `dtcas` >= 0) OR (`version` > %s AND `dtcas` < 0))"
+    sqlitems2e = " WHERE `itkey` >= %s and `ìtkey` <= %s AND `version` > %s AND `dtcas` >= 0"
+    sqlitems2f = " WHERE `itkey` >= %s and `ìtkey` <= %s AND `version` < %s AND `dtcas` >= 0"
     
-    def getArchive(self, table, docid, isfull):
+    def getArchive(self, table:str, docid:str, isfull) -> DocumentArchive:
         """
-        Construit une archive depuis la base
+        Construit une archive depuis la base uniquement
         """
-        arch = DocumentArchive(table, docid, isfull)
-        arch.docid = docid
-        sql = Provider.sqlitems1b + self.org + "_" + table + (Provider.sqlitems2b if isfull else Provider.sqlitems2a)
+        sql = Provider.sqlitems1a + self.org + "_" + table + (Provider.sqlitems2b if isfull else Provider.sqlitems2a)
         try:
-            nbItems = 0
             with self.connection.cursor() as cursor:
-                nbItems = cursor.execute(sql, (docid, docid + " zzzzzzzz"))
+                if cursor.execute(sql, (docid, docid + " zzzzzzzz")) == 0:
+                    return None
+                arch = DocumentArchive(table, docid, isfull)
                 lst = cursor.fetchall()
                 for row in lst:
                     cl, keys = Provider.clkeys(row)
@@ -159,119 +157,146 @@ class Provider:
                     if itd is None or (not itd.isSingleton and len(itd.keys) != len(keys)):
                         continue
                     arch.addItem(cl, keys, Provider.meta(row), Provider.content(row))
-            if nbItems == 0:
-                return (0, None)
-            else:
-                return (3, arch)
+                return arch
         except Exception as e:
             raise self.SqlExc(sql, e)
 
-    def getHdr(self, table, docid):
+    def _getHdr(self, table:str, docid:str, version:int) -> Tuple[Meta, str]:
         """
         Retourne hdr : nécessaire pour savoir si le document existe
         """
-        arch = DocumentArchive(table, docid, False)
-        arch.docid = docid
-        sql = Provider.sqlitems1a + self.org + "_" + table + Provider.sqlitems2a
+        sql = Provider.sqlitems1b + self.org + "_" + table + Provider.sqlitems2c
         try:
             with self.connection.cursor() as cursor:
-                if cursor.execute(sql, (docid,)) == 0:
-                    return None
+                if cursor.execute(sql, (version, version, docid, version)) == 0:
+                    return (None, None)
                 row = cursor.fetchone()
-                arch.addItem("hdr", (), Provider.meta(row), Provider.content(row))
-            return arch
+                return (Provider.meta(row), Provider.content(row))
         except Exception as e:
             raise self.SqlExc(sql, e)
     
-    def getDelta(self, old, isfull):
+    def getUpdatedArchive(self, old:DocumentArchive) -> DocumentArchive:
         """
-        Construit l'archive delta du document table/docid pour la mise à jour depuis old
-        retourne le tuple (statut, delta)
-        statut vaut : 0-document inconnu, 1-old à jour, 2:delta (old -> base)
-        Lecture du hdr pour savoir si le document existe et avoir sa version dtcas
-        - cas not wk : vb va dtb
-            - items contient les suppressions entre dtb et vb et les créations / modifications / suppressions après va
-        - cas wk : vb dtb va
-            - items contient les items créés / modifiés / supprimés après va
-            - keys contient les clkeys des items modifiés et existants avant va 
+        Construit one nouvelle archive du document table/docid depuis old, une ancienne archive de version va) et l'état de la base de version vb
+        - **la nouvelle archive inclut toujours la liste des items créés ou modifiés entre `va` et `vb`** mais d'autres items sont à intégrer :
+            - à) les items existants dans l'archive antérieure, non modifiés depuis `va` et toujours existants.
+            - b) les items supprimés depuis `dtcas` et dont certains sont déjà cités dans l'archive antérieure.
+        - ***Deux situations se présentent***
+            - **cas 1 : va >= dtcas de la base**. Toutes les suppressions d'items permettant de construire la nouvelle archive depuis l'ancienne sont disponibles : 
+                - *on tire de la base et on inclut dans la nouvelle archive: a) les items existants créés / modifiés après `va`, b) les items détruits postérieurement à `dtcas`*
+                - les items de l'archive antérieure *qui ne figurent pas* dans la nouvelle archive sont examinés :
+                    - ceux marqués existants et pas déjà réfrencés dans la nouvelle archive, sont référencés dans la nouvelle archive.
+            - **cas 2 : va < dtcas de la base**. La base ne dispose plus de la trace de toutes les suppressions intervenues entre `va` et `dtcas` de la base. 
+                - *on tire de la base : a) les items existants créés / modifiés après `va` qui sont intégrés dans la nouvelle archive, b) la liste `lk` des clés des items existants (créés / modifiés) avant `va`*. 
+                - les items de l'archive antérieure qui ne figurent pas dans la nouvelle archive sont examinés :
+                    - ceux marqués existants et dont la clé figure dans `lk`, sont référencés dans la nouvelle archive.
+                    - ceux marqués détruits, ne sont référencés dans la nouvelle archive que si leur destruction est postérieure à `dtcas`.
         
         """
-        arch = self.getHdr(old.descr.table, old.docid)
-        if arch is None:
-            return (0, None)
+        meta, content = self._getHdr(old.descr.table, old.docid, old.version)
+        if meta is None:    # le document n'existe pas
+            return None
+        if meta[0] == old.version:  # le document n'a pas changé
+            return old
+            
+        arch = DocumentArchive(old.descr.table, old.docid, old.isfull)  # nouvelle archive
+        arch.addItem("hdr", (), meta, content)
+                
+        if old.version >= arch.dtcas:
+            # on tire de la base et on inclut dans la nouvelle archive: 
+            # a) les items existants créés / modifiés après `va`
+            # b) les items détruits postérieurement à `dtcas`
+            sql = Provider.sqlitems1a + self.org + "_" + old.descr.table + Provider.sqlitems2d
+            try:
+                with self.connection.cursor() as cursor:
+                    if cursor.execute(sql, (old.docid, old.docid + " zzzzzzzz", old.version, arch.dtcas)) != 0:
+                        lst = cursor.fetchall()
+                        for row in lst:
+                            cl, keys = Provider.clkeys(row)
+                            itd = arch.descr.itemDescrByCode.get(cl, None)
+                            if itd is None or (not itd.isSingleton and len(itd.keys) != len(keys)):
+                                continue
+                            meta = Provider.meta(row)
+                            if meta[1] < 0:     # suppression
+                                arch.addItem(cl, keys, meta, None)
+                            else:               # creation maj
+                                arch.addItem(cl, keys, meta, Provider.content(row))
+                # les items de l'archive antérieure *qui ne figurent pas* dans la nouvelle archive sont examinés :
+                # ceux marqués existants et pas déjà référencés dans la nouvelle archive, sont référencés dans la nouvelle archive.
+                for k in old.clkeys():
+                    if not k in arch.items:
+                        meta, content = old.items[k]
+                        if meta[1] >= 0:
+                            arch.addItem(k[0], k[1], meta, content)
+                return arch
+            except Exception as e:
+                raise self.SqlExc(sql, e)
 
-        if arch.version <= old.version:
-            return (1, None)
-        
-        if not isfull:  # cas traité à part : seul hdr
-            return (2, arch)
-        
-        wk = old.version < arch.dtcas
-        minv = arch.dtcas if wk else old.version
-        sql = Provider.sqlitems1d + self.org + "_" + old.descr.table + Provider.sqlitems2d
+        # on tire de la base : 
+        # a) les items existants créés / modifiés après `va`, 
+        sql = Provider.sqlitems1a + self.org + "_" + old.descr.table + Provider.sqlitems2e
         try:
             with self.connection.cursor() as cursor:
-                if cursor.execute(sql, (old.docid, old.docid + " zzzzzzzz", minv)) != 0:
+                if cursor.execute(sql, (old.docid, old.docid + " zzzzzzzz", old.version)) != 0:
                     lst = cursor.fetchall()
                     for row in lst:
                         cl, keys = Provider.clkeys(row)
                         itd = arch.descr.itemDescrByCode.get(cl, None)
                         if itd is None or (not itd.isSingleton and len(itd.keys) != len(keys)):
                             continue
-                        meta = Provider.meta(row)
-                        if not wk:
-                            if meta[1] < 0: # del
-                                arch.addItem(cl, keys, meta, None)
-                            else: # cre maj
-                                if meta[0] > old.version:
-                                    arch.addItem(cl, keys, meta, Provider.content(row))
-                        else:
-                            arch.addItem(cl, keys, meta, Provider.content(row))
+                        arch.addItem(cl, keys, Provider.meta(row), Provider.content(row))
         except Exception as e:
             raise self.SqlExc(sql, e)
         
-        if wk:
-            # keys contient les clkeys des items modifiés et existants avant va
-            arch.keys = set()
-            sql = Provider.sqlitems1c + self.org + "_" + old.descr.table + Provider.sqlitems2c
-            try:
-                with self.connection.cursor() as cursor:
-                    if cursor.execute(sql, (old.docid, old.docid + " zzzzzzzz", minv)) != 0:
-                        lst = cursor.fetchall()
-                        for row in lst:
-                            arch.keys.add(Provider.clkeys(row))
-            except Exception as e:
-                raise self.SqlExc(sql, e)
-        return (2, arch)
+        # b) la liste `lk` des clés des items existants (créés / modifiés) avant `va`*. 
+        lk = set()
+        sql = Provider.sqlitems1c + self.org + "_" + old.descr.table + Provider.sqlitems2f
+        try:
+            with self.connection.cursor() as cursor:
+                if cursor.execute(sql, (old.docid, old.docid + " zzzzzzzz", old.version)) != 0:
+                    lst = cursor.fetchall()
+                    for row in lst:
+                        lk.add(Provider.clkeys(row))
+        except Exception as e:
+            raise self.SqlExc(sql, e)
+        # Les items de l'archive antérieure qui ne figurent pas dans la nouvelle archive sont examinés :
+        # - ceux marqués existants et dont la clé figure dans `lk`, sont référencés dans la nouvelle archive.
+        # - ceux marqués détruits, ne sont référencés dans la nouvelle archive que si leur destruction est postérieure à `dtcas`.
+        for k in old.clkeys():
+            meta, content = old.items[k]
+            if meta[1] >= 0:
+                if k in lk:
+                    arch.addItem(k[0], k[1], meta, content)
+            else:
+                if meta[0] > arch.dtcas:
+                    arch.addItem(k[0], k[1], meta, content)
+        return arch
 
     ####################################################################################
 
-    sqlpurge = "DELETE FROM "
-
-    def purge(self, descr, docid):
+    def _purge(self, descr:DocumentDescr, docid:str) -> None:
         """
         Purge les items d'un docid donné
         """
-        names = list(descr.table)
-        for idx in descr.indexes:
-            names.append(idx)
-        
-        for n in names:
-            sql = Provider.sqlpurge + self.org + "_" + n + Provider.sqlitems2b
+        sql = "DELETE FROM " + self.org + "_" + descr.table + Provider.sqlitems2b
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(sql, (docid, docid + " zzzzzzzz"))
+        except Exception as e:
+            raise self.SqlExc(sql, e)       
+        for n in descr.indexes:
+            sql = "DELETE FROM " + self.org + "_" + n + " WHERE `docid` = %s"
             try:
                 with self.connection.cursor() as cursor:
-                    cursor.execute(sql, (docid, docid + " zzzzzzzz"))
+                    cursor.execute(sql, (docid,))
             except Exception as e:
                 raise self.SqlExc(sql, e)
 
-    sqlitems4 = "SELECT `version` FROM "
-    sqlitems4a = " WHERE `docid` = %s FOR UPDATE NOWAIT"
-
-    def lockHdr(self, table, docid, version):
+    def _lockHdr(self, table:str, docid:str, version:int) -> None:
         """
         Check la version du hdr. Si version == 0, ne DOIT pas exister
         """
-        sql = Provider.sqlitems4 + self.org + "_" + table + Provider.sqlitems4a
+        sql = Provider.sqlitems1g + self.org + "_" + table + " WHERE `docid` = %s FOR UPDATE NOWAIT"
         try:
             with self.connection.cursor() as cursor:
                 if cursor.execute(sql, (docid,)) == 0:
@@ -286,41 +311,18 @@ class Provider:
         except Exception as e:
             al.warn(str(e))
             raise AppExc("XCV", [self.operation.opName, self.org, table + "/" + docid])
-    
-    """
-    `docid` varchar(128) NOT NULL COMMENT 'identifiant du document',
-     `clkey` varchar(128) NOT NULL COMMENT 'classe / identifiant de l''item',
-     `version` bigint(20) NOT NULL COMMENT 'version de l''item, date-heure de dernière modification',
-     `size` int(11) NOT NULL,
-     `ctime` bigint(20) DEFAULT NULL,
-     `dtime` bigint(20) DEFAULT NULL,
-     `totalsize` int(11) DEFAULT NULL,
-     `serial` varchar(4000) DEFAULT NULL COMMENT 'sérialiastion de l''item',
-     `serialGZ` blob COMMENT 'sérialisation gzippée de l''item',
-
-    """
-    sqlitemins1 = "INSERT INTO "
-    sqlitemins2 = " (`docid`, `clkey`, `version`, `size`, `ctime`, `dtime`, `totalsize`, `serial`, `serialGZ`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
-
-    sqlitemupd1 = "UPDATE "
-    sqlitemupd2a = " SET `version` = %s, `size` = %s, `ctime` = %s, `dtime` = %s, `totalsize` = %s WHERE `docid` = %s AND `clkey` = %s"
-    sqlitemupd2b = " SET `version` = %s, `size` = %s, `ctime` = %s, `dtime` = %s, `totalsize` = %s, `serial` = %s, `serialGZ` = %s WHERE `docid` = %s AND `clkey` = %s"
-    
-    def _dclk(self, docid, u):
-        return (docid, u.cl + json.dumps(u.keys))
-    
-    def _meta(self, u):
-        meta = u.meta
-        return meta if len(meta) == 5 else meta + (0, 0)
-    
-    def _sql(self, sql, args):
+        
+    def _itkey(self, docid:str, u:LocalUpdate) -> str:
+        return docid if u.cl == "hdr" else (docid + " " + u.cl + ("" if len(u.keys) == 0 else json.dumps(u.keys)))
+        
+    def _sql(self, sql:str, args:Iterable) -> None:
         try:
             with self.connection.cursor() as cursor:
                 cursor.execute(sql, args)
         except Exception as e:
             raise self.SqlExc(sql, e)
     
-    def _insidx(self, name, cols, kns, docid, keys, lval):
+    def _insidx(self, name:str, cols:Iterable[str], kns:Tuple[str], docid:str, keys:Iterable, lval:Iterable) -> None:
         t = list("INSERT INTO " + self.org + "_" + name +" (")
         for col in cols:
             t.append("`" + (col if not col.startswith("*") else col[1:]) + "`,")
@@ -347,7 +349,7 @@ class Provider:
                     args.append(k)
         self._sql(sql, args)
         
-    def _updidx(self, name, cols, kns, docid, keys, val):
+    def _updidx(self, name:str, cols:Iterable[str], kns:Tuple[str], docid:str, keys:Iterable, val) -> None:
         t = list("UPDATE " + self.org + "_" + name +" SET ")
         t2 = []
         for col in cols:
@@ -365,8 +367,8 @@ class Provider:
             args.append(kv)
         self._sql(sql, args)
             
-    def _delidx(self, name, kns, docid, keys):
-        t = list("DELETE FROM " + self.org + "_" + name +" WHERE `docid`=%s")
+    def _delidx(self, name:str, kns:Tuple[str], docid:str, keys:Iterable) -> None:
+        t = list("DELETE FROM " + self.org + "_" + name +" WHERE `docid`= %s")
         for kn in kns:
             t.append(" and `" + kn + "` = %s")
         sql = "".join(t)
@@ -376,24 +378,27 @@ class Provider:
             args.append(kv)
         self._sql(sql, args)
                         
-    def IUDitems(self, upd):
+    sqlitemins = " (`itkey`, `version`, `dtcas`, `size`, `serial`, `serialGZ`) VALUES (%s, %s, %s, %s, %s, %s)"
+    sqlitemupd2 = " SET `version` = %s, `dtcas` = %s, `size` = %s WHERE `itkey` = %s"
+
+    def _IUDitems(self, upd:Update) -> int:
         nbi = 0
         for u in upd.updates.values():
             nbi += 1
             # c : 1:insert meta and content, 2:update meta only, 3:update meta and delete content, 4:update meta and content
             # u {"c":c, "cl":cl, "keys":keys, "meta":meta, "content":content}
             if u.c == 1:
-                args = self._dclk(upd.docid, u) + self._meta(u) + Provider.contentarg(u.content)
-                sql = Provider.sqlitemins1 + self.org + "_" + upd.table + Provider.sqlitemins2
+                args = self._itkey(upd.docid, u) + u.meta + Provider.contentarg(u.content)
+                sql = "INSERT INTO " + self.org + "_" + upd.table + Provider.sqlitemins
             elif u.c == 2:
-                args = self._meta(u) + self._dclk(upd.docid, u)
-                sql = Provider.sqlitemupd1 + self.org + "_" + upd.table + Provider.sqlitemupd2a
+                args = u.meta + self._itkey(upd.docid, u)
+                sql = "UPDATE " + self.org + "_" + upd.table + Provider.sqlitemupd
             elif u.c == 3:
-                args = self._meta(u) + (None, None) + self._dclk(upd.docid, u)      
-                sql = Provider.sqlitemupd1 + self.org + "_" + upd.table + Provider.sqlitemupd2b
+                args = u.meta + (None, None) + self._itkey(upd.docid, u)      
+                sql = "UPDATE " + self.org + "_" + upd.table + Provider.sqlitemupd
             else:
-                args = self._meta(u) + Provider.contentarg(u.content) + self._dclk(upd.docid, u)
-                sql = Provider.sqlitemupd1 + self.org + "_" + upd.table + Provider.sqlitemupd2b
+                args = u.meta + Provider.contentarg(u.content) + self._itkey(upd.docid, u)
+                sql = "UPDATE " + self.org + "_" + upd.table + Provider.sqlitemupd
             self._sql(sql, args)
         
         for idxUpd in upd.indexes.values():
@@ -424,7 +429,7 @@ class Provider:
                         self._delidx(n, cols, kns, upd.docid, ikv.keys)
         return nbi
         
-    def validate(self, vl):
+    def validate(self, vl:ValidationList) -> int:
         """
         validation de tous les documents
         status : 0:deleted, 1:unmodified, 2:modified, 3:created 4:recreated (after deletion)
@@ -435,31 +440,31 @@ class Provider:
         self.connection.begin()
         
         for descr, docid in vl.upd[0]:
-            self.lockHdr(descr.table, docid, vl.version)
+            self._lockHdr(descr.table, docid, vl.version)
         for descr, docid in vl.upd[1]:
-            self.lockHdr(descr.table, docid, vl.version)
+            self._lockHdr(descr.table, docid, vl.version)
         for upd in vl.upd[2]:
-            self.lockHdr(upd.table, upd.docid, vl.version)
+            self._lockHdr(upd.table, upd.docid, vl.version)
         for upd in vl.upd[3]:
-            self.lockHdr(upd.table, upd.docid, 0)
+            self._lockHdr(upd.table, upd.docid, 0)
         for upd in vl.upd[4]:
-            self.lockHdr(upd.table, upd.docid, vl.version)
+            self._lockHdr(upd.table, upd.docid, vl.version)
             
         nbi = 0
         for i in range(4):
             nbi += len(vl.upd[i])
         
         for descr, docid in vl.upd[0]:
-            self.purge(descr, docid)
+            self._purge(descr, docid)
         for upd in vl.upd[4]:
-            self.purge(upd.descr, docid)
+            self._purge(upd.descr, docid)
             
         for upd in vl.upd[2]:
-            nbi += self.IUDitems(upd)
+            nbi += self._IUDitems(upd)
         for upd in vl.upd[3]:
-            nbi += self.IUDitems(upd)
+            nbi += self._IUDitems(upd)
         for upd in vl.upd[4]:
-            nbi += self.IUDitems(upd)
+            nbi += self._IUDitems(upd)
         
         self.connection.commit()
         return nbi
@@ -489,7 +494,8 @@ class Provider:
      `t4` = `t4` + VALUES(`t4`), `t5` = `t5` + VALUES(`t5`), `t6` = `t6` + VALUES(`t6`), `t7` = `t7` + VALUES(`t7`), \
      `f0` = `f0` + VALUES(`f0`), `f1` = `f1` + VALUES(`f1`), `f2` = `f2` + VALUES(`f2`), `f3` = `f3` + VALUES(`f3`), \
      `f4` = `f4` + VALUES(`f4`), `f5` = `f5` + VALUES(`f5`), `f6` = `f6` + VALUES(`f6`), `f7` = `f7` + VALUES(`f7`)"
-    def setAccTkt(self, tk):
+     
+    def setAccTkt(self, tk:AccTkt) -> None:
         args = [tk.org, tk.table, tk.tktid, tk.v, tk.state]
         for t in tk.t:
             args.append(t)
@@ -503,21 +509,23 @@ class Provider:
         except Exception as e:
             raise self.SqlExc(Provider.sqlacctkt, e)
 
-    def searchInIndex(self, code, rc, sc, startCols):
+    def searchInIndex(self, name:str, startCols:Dict[str, Any], resCols:Iterable[str]) -> Iterable[Dict[str, Any]]:
+        # startcols : {"c1":"v1", "c2:n2 ... }
+        # resCols : ("c3","c4")
         sqlx = ["SELECT "]
         i = 0
-        for c in rc:
-            sqlx.append(("`" if i == 0 else ", `") + (c if not c.startswith("*") else c[1:]) + "`")
+        for c in resCols:
+            sqlx.append(("`" if i == 0 else ", `") + c + "`")
             i += 1
-        sqlx.append("FROM " + self.org + "_" + code + " WHERE ")
-        i = 0
-        for c in sc:
-            sqlx.append((" `" if i == 0 else " and `") + (c if not c.startswith("*") else c[1:]) + "` = %s")
-            i += 1
+        sqlx.append(" FROM " + self.org + "_" + name + " WHERE ")
+        lv = []
+        for c in startCols.keys():
+            sqlx.append((" `" if i == 0 else " and `") + c + "` = %s")
+            lv.append(startCols[c])
         sql = "".join(sqlx)
         try:
             with self.connection.cursor() as cursor:
-                cursor.execute(sql, startCols)
+                cursor.execute(sql, lv)
                 return cursor.fetchall()
         except Exception as e:
             raise self.SqlExc(sql, e)
@@ -533,8 +541,7 @@ def test():
     provider = Provider(op)
     return provider.onoff()
 
-z, y = test()
-print("OK")
-
+#z, y = test()
+#print("OK")
 
     

@@ -1,4 +1,4 @@
-from document import Document, Singleton, Item, Index, DocumentArchive, DOperation
+from document import Document, Singleton, Item, Index, DocumentArchive, DOperation, Param
 import json
 
 class Compte(Document):
@@ -20,7 +20,7 @@ Document.registerItem(Compte, Adherent, "adh", ("da", "na"), (i1, i2))
 class CreationParam: pass
 
 class Creation(DOperation):
-    def process(self, param):
+    def process(self, param:Param):
         p = self.newFromDict(CreationParam, param)
         c = self.getOrNew(Compte, p.idc)
         hdr = c.hdr()
@@ -34,7 +34,7 @@ class Creation(DOperation):
             
         lk = c.itemkeys(Adherent)
         
-        lst = self.findInIndex(Compte, "enf", (720717,))
+        lst = self.findInIndex(Compte, "enf", {"dn":720717}, ("docid", "da", "na", "prn"))
         
         k = (p.dadh, p.nadh)
         if k not in lk:
