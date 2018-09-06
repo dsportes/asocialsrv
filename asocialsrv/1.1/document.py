@@ -12,6 +12,83 @@ ClKeys = Tuple[str,Tuple[Any]]
 Sync = Dict[str, Any]
 Param = Dict[str, Any]
 
+class DocumentDescr: 
+    def __init__(self, cls:Type, table:str):
+        self.cls = cls
+        cls._descr = self
+        self.documentName = self.cls.__name__
+        self.table = table
+        self.hdr = None
+        self.itemDescrByCls = {}
+        self.itemDescrByCode = {}
+        self.indexes = {}
+        
+    def hasIndexes(self):
+        return len(self.indexes) != 0
+    
+    def id(self, docid:str) -> str:
+        return self.table + "/" + docid;
+
+class Index:
+    def __init__(self, name:str, columns:Tuple[str], varList:str = None):
+        assert (name is not None and isinstance(name, str) and len(name) > 0), "Index name is not a non empty string"
+        assert (columns is not None and isinstance(columns, tuple) and len(columns) > 0), "colums of Index " + name + " not a non empty list"
+        for col in columns:
+            assert (col is not None and isinstance(col, str)), "A column of Index " + name + " name is None or not a string"
+            i = columns.index(col)
+            j = len(columns) - columns[::-1].index(col) - 1
+            assert j == i , "Duplicate name " + col + "in Index " + name
+        self.columns = columns
+        assert varList is None or (isinstance(varList, str) and len(varList) > 0), "varList not an item property name"
+        self.varList = varList
+        self.name = name
+        self.kns = ()
+        
+    def isList(self):
+        return self.varList is not None
+    
+class ItemDescr:
+    def __init__(self, DocumentClass:Type, ItemClass:Type, code:str, keys:Tuple[str], indexes:Tuple[Index]):
+        dd = Document.descr(DocumentClass)
+        assert (dd is not None), "DocumentClass not registered"
+        assert (ItemClass.__name__ not in dd.itemDescrByCls), "ItemClass is already registered"
+        assert code is not None and isinstance(code, str) and code not in dd.itemDescrByCode and len(code) > 0, "code is None or not a string or empty or is already registered"
+        assert (indexes is None or isinstance(indexes, tuple))
+        self.documentDescr = dd
+        self.cls = ItemClass
+        ItemClass._descr = self
+        self.code = code
+        self.nbOfIndexes = 0
+        for key in keys:
+            assert (key is not None and isinstance(key, str)), "A property name in keys " + key + " is None or not a string"
+            i = keys.index(key)
+            j = len(keys) - keys[::-1].index(key) - 1
+            assert j == i , "Duplicate property name " + key + "in keys"
+        self.keys = keys
+        dd.itemDescrByCls[ItemClass.__name__] = self
+        dd.itemDescrByCode[code] = self
+        if code == "hdr":
+            dd.hdr = self
+        self.isSingleton = issubclass(ItemClass, Singleton)
+        self.indexes = {}
+        if indexes is not None and len(indexes) != 0:
+            for idx in indexes:
+                assert (idx.name not in dd.indexes), "Index " + idx.name + " already registered in the document"
+                idx.kns = keys
+                dd.indexes[idx.name] = idx
+                self.indexes[idx.name] = idx
+
+    def hasIndexes(self):
+        return len(self.indexes) != 0
+
+class LocalIndex:
+    def __init__(self, idx:str):
+        self.idx = idx
+        self.updates = [] # IdxVal
+    
+    def addIdxVal(self, ird:int, keys:Keys, val) -> None:
+        self.updates.append(IrdKV(ird, keys, val))
+
 class Update:
     def __init__(self, docDescr:DocumentDescr, docid:str, version:int, dtcas:int):
         """
@@ -45,13 +122,6 @@ class Update:
     def getIndex(self, idx:str) -> LocalIndex:
         return self.indexes.get(idx, None)
             
-class LocalIndex:
-    def __init__(self, idx:str):
-        self.idx = idx
-        self.updates = [] # IdxVal
-    
-    def addIdxVal(self, ird:int, keys:Keys, val) -> None:
-        self.updates.append(IrdKV(ird, keys, val))
 
 class IrdKV:
     def __init__(self, ird:int, keys:Keys, val):
@@ -117,74 +187,6 @@ class DocumentArchive:
     def getItem(self, clkeys:ClKeys):
         return self.items.get(clkeys, None)
     
-class DocumentDescr: 
-    def __init__(self, cls:Type, table:str):
-        self.cls = cls
-        cls._descr = self
-        self.documentName = self.cls.__name__
-        self.table = table
-        self.hdr = None
-        self.itemDescrByCls = {}
-        self.itemDescrByCode = {}
-        self.indexes = {}
-        
-    def hasIndexes(self):
-        return len(self.indexes) != 0
-    
-    def id(self, docid:str) -> str:
-        return self.table + "/" + docid;
-    
-class ItemDescr:
-    def __init__(self, DocumentClass:Type, ItemClass:Type, code:str, keys:Tuple[str], indexes:Tuple[Index]):
-        dd = Document.descr(DocumentClass)
-        assert (dd is not None), "DocumentClass not registered"
-        assert (ItemClass.__name__ not in dd.itemDescrByCls), "ItemClass is already registered"
-        assert code is not None and isinstance(code, str) and code not in dd.itemDescrByCode and len(code) > 0, "code is None or not a string or empty or is already registered"
-        assert (indexes is None or isinstance(indexes, tuple))
-        self.documentDescr = dd
-        self.cls = ItemClass
-        ItemClass._descr = self
-        self.code = code
-        self.nbOfIndexes = 0
-        for key in keys:
-            assert (key is not None and isinstance(key, str)), "A property name in keys " + key + " is None or not a string"
-            i = keys.index(key)
-            j = len(keys) - keys[::-1].index(key) - 1
-            assert j == i , "Duplicate property name " + key + "in keys"
-        self.keys = keys
-        dd.itemDescrByCls[ItemClass.__name__] = self
-        dd.itemDescrByCode[code] = self
-        if code == "hdr":
-            dd.hdr = self
-        self.isSingleton = issubclass(ItemClass, Singleton)
-        self.indexes = {}
-        if indexes is not None and len(indexes) != 0:
-            for idx in indexes:
-                assert (idx.name not in dd.indexes), "Index " + idx.name + " already registered in the document"
-                idx.kns = keys
-                dd.indexes[idx.name] = idx
-                self.indexes[idx.name] = idx
-
-    def hasIndexes(self):
-        return len(self.indexes) != 0
-
-class Index:
-    def __init__(self, name:str, columns:Tuple[str], varList:str = None):
-        assert (name is not None and isinstance(name, str) and len(name) > 0), "Index name is not a non empty string"
-        assert (columns is not None and isinstance(columns, tuple) and len(columns) > 0), "colums of Index " + name + " not a non empty list"
-        for col in columns:
-            assert (col is not None and isinstance(col, str)), "A column of Index " + name + " name is None or not a string"
-            i = columns.index(col)
-            j = len(columns) - columns[::-1].index(col) - 1
-            assert j == i , "Duplicate name " + col + "in Index " + name
-        self.columns = columns
-        assert varList is None or (isinstance(varList, str) and len(varList) > 0), "varList not an item property name"
-        self.varList = varList
-        self.name = name
-        self.kns = ()
-        
-    def isList(self):
-        return self.varList is not None
         
 class Document:
     """
@@ -201,7 +203,7 @@ class Document:
     _byTable = {}
     DELHISTORYINDAYS = 30
     
-    def filterSyncItem(self, operation:DOperation, fargs:Dict, docid:str, clstr, keys:Keys, version:int, dtcas:int, size:int, content:str) -> str:
+    def filterSyncItem(self, operation:Operation, fargs:Dict, docid:str, clstr, keys:Keys, version:int, dtcas:int, size:int, content:str) -> str:
         return content
     
     def register(cls:Type, table:str) -> DocumentDescr:
@@ -236,7 +238,7 @@ class Document:
     def docid(self) -> str:
         return self._docid if self._docid is not None else "!!!RELEASED!!!"
     
-    def hdr(self) -> Singleton:
+    def hdr(self): # -> Singleton
         assert self._docid is not None, "Document " + self.id()
         return self._hdr
     
@@ -284,11 +286,11 @@ class Document:
         if hasattr(self, "_changeditems"):
             del self._changeditems
         
-    def _createFromArchive(arch:DocumentArchive) -> Document: 
+    def _createFromArchive(arch:DocumentArchive): # -> Document
         assert arch is not None and isinstance(arch, DocumentArchive), "createFromArch with no arch"
         return Document._create(arch.descr, arch.docid, arch, 0, True)
 
-    def _create(docDescr:DocumentDescr, docid:str, arch:DocumentArchive, age:int, isfull) -> Document: # if arch is given, load from archive, else to create            
+    def _create(docDescr:DocumentDescr, docid:str, arch:DocumentArchive, age:int, isfull): #  -> Document if arch is given, load from archive, else to create            
         d = docDescr.cls()
         d._descr = docDescr
         d._docid = docid
@@ -322,7 +324,7 @@ class Document:
             itd.cls()._setDocument(d)._setup(3, (0,0,0), ())
         return d
             
-    def _getItem(self, itd:ItemDescr, keys:Keys, orNew) -> BaseItem:
+    def _getItem(self, itd:ItemDescr, keys:Keys, orNew): # -> BaseItem
         if itd.code == "hdr":
             return self._hdr
         assert keys is not None and isinstance(keys, tuple), "getItem without keys tuple "+ self.fk(itd, keys)
@@ -347,13 +349,13 @@ class Document:
             item._oldindexes = item._getAllIndexes()
             return item
     
-    def item(self, cls:Type, keys:Keys = tuple()) -> BaseItem:
+    def item(self, cls:Type, keys:Keys = tuple()): # -> BaseItem:
         assert self._docid is not None, "Document " + self.id()
         itd = self._descr.itemDescrByCls.get(cls.__name__, None)
         assert itd is not None, "Item not registered " + cls
         return self._getItem(itd, keys, False)
 
-    def itemOrNew(self, cls:Type, keys:Keys = tuple()) -> BaseItem:
+    def itemOrNew(self, cls:Type, keys:Keys = tuple()): # -> BaseItem:
         assert self._docid is not None, "Document " + self.id()
         itd = self._descr.itemDescrByCls.get(cls.__name__, None)
         assert itd is not None, "Item not registered " + cls
@@ -370,7 +372,7 @@ class Document:
     def nbChanges(self) -> int:
         return 0 if not hasattr(self, "_changeditems") else len(self._changeditems)
     
-    def _notifyChange(self, dl:int, chg:int, item:BaseItem = None) -> None: 
+    def _notifyChange(self, dl:int, chg:int, item = None) -> None: 
         # chg: 0:no new item to save, 1:add item, -1:remove item, dv1/dv2 delta of volumes
         i = (item._descr.code, item._keys) if chg != 0 else ()
         if chg != 0 and not hasattr(self, "_changeditems"):
@@ -483,11 +485,11 @@ class BaseItem:
     def NT(self) -> int:
         return self._nt if hasattr(self, "_nt") else self._document._hdr.size()
     
-    def _setDocument(self, document:Document) -> BaseItem:
+    def _setDocument(self, document:Document): # -> BaseItem:
         self._document = document
         return self
         
-    def _loadFromJson(self, json_data:str) -> BaseItem:
+    def _loadFromJson(self, json_data:str): # -> BaseItem:
         self._reset()
         if json_data is not None:
             d = json.loads(json_data)       # d is a dict
@@ -539,7 +541,7 @@ class BaseItem:
                     result.append(values)
             return result if len(result) > 0 else None
                 
-    def _setup(self, status:int, meta:Meta, keys:Keys, content:str = None) -> BaseItem: # status -1:NOT existing, 1:unmodified 3:created
+    def _setup(self, status:int, meta:Meta, keys:Keys, content:str = None): # -> BaseItem: # status -1:NOT existing, 1:unmodified 3:created
         self._keys = keys
         self._setKeys()
         self._meta = meta     
@@ -575,7 +577,7 @@ class BaseItem:
         for var in lst:
             del self.__dict__[var]
 
-    def _resetChanges(self) -> BaseItem:
+    def _resetChanges(self): # -> BaseItem:
         self._reset()
         self._status = 4
         self._newserial = "{}"
@@ -678,7 +680,7 @@ class BaseItem:
             self._document = None
             self._status = -1
             
-    def _eq(self, oldv:Iterable, newv:Iterable, isList):
+    def _eq(self, oldv:Iterable, newv:Iterable, isList): # True/False
         if not isList:
             i = 0
             for v in oldv:
@@ -886,7 +888,7 @@ class DOperation(Operation):
         idx = docDescr.indexes.get(index, None)
         assert idx is not None, "Unregistered index for " + docDescr.table
         assert startCols is not None and isinstance(startCols, dict) and len(startCols) <= len(idx.columns), "Starting columns not given or too many for index " + idx.name + " of "  + docDescr.table
-        return self.provider.searchInIndex(idx.name, resCols, startCols)
+        return self.provider.searchInIndex(idx.name, startCols, resCols)
         
     def validation(self) -> None:
         version = self.stamp.stamp

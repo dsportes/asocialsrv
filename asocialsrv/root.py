@@ -174,13 +174,13 @@ class Operation:
     
     def checkOnOff(self):
         z, y = self.provider.onoff()
-        st = 1 if z['ison'] > 0 and y['ison'] > 0 else 0
-        self.respXCH = {"inb":cfg.inb, 'uiba':self.execCtx.uiba, 'onoff':st, 'infoGen':z['info'], 'infoOrg':y['info']}
+        st = 1 if z.ison > 0 and y.ison > 0 else 0
+        self.respXCH = {"inb":cfg.inb, 'uiba':self.execCtx.uiba, 'onoff':st, 'infoGen':z.info, 'infoOrg':y.info}
         if self.opName == 'base.InfoOP':
             return
-        if z['ison'] != 1:
+        if z.ison != 1:
             raise AppExc("OFF2")
-        if y['ison'] != 1:
+        if y.ison != 1:
             raise AppExc("OFF3")
     
     def close(self):

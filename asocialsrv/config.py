@@ -29,7 +29,8 @@ class Cfg:
         if self.useBuild:
             self.uipath = "/home/daniel/git/asocialui/asocialui/build/"
         else:
-            self.uipath = "/home/daniel/git/asocialui/asocialui"    # dans environnement de test            
+            #self.uipath = "/home/daniel/git/asocialui/asocialui"    # dans environnement de test            
+            self.uipath = "C:/eclipse/git/asocialui/asocialui"    # dans environnement de test            
         
         self.origins = ["http://localhost", "http://localhost:8000", "http://localhost:8081", "https://test.sportes.fr"]
         

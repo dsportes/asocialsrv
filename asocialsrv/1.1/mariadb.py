@@ -8,7 +8,7 @@ from gzip import compress, decompress
 from typing import Dict, Tuple, Any, Iterable
     
 class OnOff:
-    def __init__(self, ison:int, info:str) -> OnOff:
+    def __init__(self, ison:int, info:str): # -> OnOff:
         self.ison = ison
         self.info = info
 Row = Dict[str, Any]
@@ -26,7 +26,7 @@ class Provider:
     onofStamp = Stamp()
     onoffrep = {}
     
-    def __init__(self, operation) -> Provider:
+    def __init__(self, operation):
         try:
             self.connection = Provider.pool.get()
             self.operation = operation
@@ -53,7 +53,7 @@ class Provider:
     
     
     sqlonoff = "SELECT `org`, `ison`, `info` FROM `onoff`"
-    def onoff(self) -> Tuple(OnOff, OnOff):
+    def onoff(self) -> Tuple[OnOff, OnOff]:
         """
         Retourne le couple des deux entrées de la table ONOFF,
         a) celle du serveur lui-même z -> infoGen
@@ -134,11 +134,11 @@ class Provider:
     sqlitems1g = "SELECT `version` FROM "
 
     sqlitems2a = " WHERE `itkey` = %s"
-    sqlitems2b = " WHERE `itkey` >= %s and `ìtkey` <= %s"
+    sqlitems2b = " WHERE `itkey` >= %s and `itkey` <= %s"
     sqlitems2c = " WHERE `itkey` = %s  AND `version` > %s"
-    sqlitems2d = " WHERE `itkey` >= %s and `ìtkey` <= %s AND ((`version` > %s AND `dtcas` >= 0) OR (`version` > %s AND `dtcas` < 0))"
-    sqlitems2e = " WHERE `itkey` >= %s and `ìtkey` <= %s AND `version` > %s AND `dtcas` >= 0"
-    sqlitems2f = " WHERE `itkey` >= %s and `ìtkey` <= %s AND `version` < %s AND `dtcas` >= 0"
+    sqlitems2d = " WHERE `itkey` >= %s and `itkey` <= %s AND ((`version` > %s AND `dtcas` >= 0) OR (`version` > %s AND `dtcas` < 0))"
+    sqlitems2e = " WHERE `itkey` >= %s and `itkey` <= %s AND `version` > %s AND `dtcas` >= 0"
+    sqlitems2f = " WHERE `itkey` >= %s and `itkey` <= %s AND `version` < %s AND `dtcas` >= 0"
     
     def getArchive(self, table:str, docid:str, isfull) -> DocumentArchive:
         """
@@ -296,7 +296,7 @@ class Provider:
         """
         Check la version du hdr. Si version == 0, ne DOIT pas exister
         """
-        sql = Provider.sqlitems1g + self.org + "_" + table + " WHERE `docid` = %s FOR UPDATE NOWAIT"
+        sql = Provider.sqlitems1g + self.org + "_" + table + " WHERE `itkey` = %s FOR UPDATE NOWAIT"
         try:
             with self.connection.cursor() as cursor:
                 if cursor.execute(sql, (docid,)) == 0:
@@ -388,16 +388,16 @@ class Provider:
             # c : 1:insert meta and content, 2:update meta only, 3:update meta and delete content, 4:update meta and content
             # u {"c":c, "cl":cl, "keys":keys, "meta":meta, "content":content}
             if u.c == 1:
-                args = self._itkey(upd.docid, u) + u.meta + Provider.contentarg(u.content)
+                args = (self._itkey(upd.docid, u),) + u.meta + Provider.contentarg(u.content)
                 sql = "INSERT INTO " + self.org + "_" + upd.table + Provider.sqlitemins
             elif u.c == 2:
-                args = u.meta + self._itkey(upd.docid, u)
+                args = u.meta + (self._itkey(upd.docid, u),)
                 sql = "UPDATE " + self.org + "_" + upd.table + Provider.sqlitemupd
             elif u.c == 3:
-                args = u.meta + (None, None) + self._itkey(upd.docid, u)      
+                args = u.meta + (None, None) + (self._itkey(upd.docid, u),)      
                 sql = "UPDATE " + self.org + "_" + upd.table + Provider.sqlitemupd
             else:
-                args = u.meta + Provider.contentarg(u.content) + self._itkey(upd.docid, u)
+                args = u.meta + Provider.contentarg(u.content) + (self._itkey(upd.docid, u),)
                 sql = "UPDATE " + self.org + "_" + upd.table + Provider.sqlitemupd
             self._sql(sql, args)
         
@@ -519,9 +519,11 @@ class Provider:
             i += 1
         sqlx.append(" FROM " + self.org + "_" + name + " WHERE ")
         lv = []
-        for c in startCols.keys():
+        i = 0
+        for c in startCols:
             sqlx.append((" `" if i == 0 else " and `") + c + "` = %s")
             lv.append(startCols[c])
+            i += 1
         sql = "".join(sqlx)
         try:
             with self.connection.cursor() as cursor:

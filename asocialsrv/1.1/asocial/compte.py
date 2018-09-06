@@ -24,7 +24,7 @@ class Creation(DOperation):
         p = self.newFromDict(CreationParam, param)
         c = self.getOrNew(Compte, p.idc)
         hdr = c.hdr()
-        if c.created():
+        if c.iscreated():
             hdr.psrBD = p.psrBD
             hdr.dhx = 2016
             hdr.commit()
