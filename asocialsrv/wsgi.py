@@ -19,7 +19,7 @@ def application(environ, start_response):
 
 from wsgiref.simple_server import make_server
 
-httpd = make_server('localhost', 8000, application)
+httpd = make_server('', 8000, application)
 print("Local server listening 8000 ...", file=sys.stderr)
 try:
     httpd.serve_forever()

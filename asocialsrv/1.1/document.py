@@ -165,18 +165,15 @@ class DocumentArchive:
         return self.descr.table + "/" + self.docid + "@" + cl + str(keys)
         
     def addItem(self, cl:str, keys:Keys, meta:Meta, content:str) -> None:
-        if cl == "hdr":
-            self.version = meta[0]
-            self.dtcas = meta[1]
-            self.size = meta[2]
-
         if meta[2] == 0:
             v = (meta, None)        
         else:
             assert content is not None and isinstance(content, str) and len(content) >= 2, "Invalid content for " + self.id2(cl, keys)
             v = (meta, content)
-            
-        if cl == "":
+        if cl == "hdr":
+            self.version = meta[0]
+            self.dtcas = meta[1]
+            self.size = meta[2]
             self.hdr = v
         else:
             self.items[(cl,keys)] = v
@@ -307,7 +304,7 @@ class Document:
 
             itd = d._descr.itemDescrByCode.get("hdr", None)
             meta, content = arch.hdr
-            itd.cls()._setDocument(d)._setup(1, meta, "hdr", content)
+            itd.cls()._setDocument(d)._setup(1, meta, (), content)
             
             if isfull:
                 for clkey in arch.clkeys():
@@ -405,6 +402,7 @@ class Document:
         upd = Update(self._descr, self.docid(), version, ndtcas if hch else None)
         arch = DocumentArchive(self._descr.table, self._docid, self._isfull)
 
+        self._hdr._validate(upd, arch, version, ndtcas)
         for cl in self._singletons:
             self._singletons[cl]._validate(upd, arch, version, ndtcas)
         for cl in self._items:
@@ -766,8 +764,9 @@ class DOperation(Operation):
             now = Stamp.epochNow()
             drec = DOperation.gCache.get(fid, None) # tuple : archive, lastGet, lastCheck
             if drec != None:
-                DOperation.gCache[fid] = (drec[0], now, drec[2])
-                return drec
+                ndrec = (drec[0], now, drec[2])
+                DOperation.gCache[fid] = ndrec
+                return ndrec
             else:
                 return None
     
@@ -861,9 +860,9 @@ class DOperation(Operation):
                 if now - lc < age * 1000:                   # age is compatible
                     return arch
                 # has to be refreshed from DB
-                newarch = self.provider.getUpdatedArchive(arch, isfull)
+                newarch = self.provider.getUpdatedArchive(arch)
                 if newarch is None:
-                    DOperation._removeArchive(fid, self.stamp)
+                    DOperation._removeArchive(fid, self.stamp.stamp)
                     return None
                 if newarch == arch:
                     DOperation._setArchiveLastCheck(fid, now)    # set the last refresh stamp in global cache
@@ -872,11 +871,11 @@ class DOperation(Operation):
         # archive not found in global cache OR was not full and requested full
         newarch = self.provider.getArchive(descr.table, docid, isfull)
         if newarch is None:         # document does not exist
-            DOperation._removeArchive(fid, self.stamp)
+            DOperation._removeArchive(fid, self.stamp.stamp)
             return None
         now = Stamp.epochNow()
         DOperation._storeArchive(newarch, now)             # store it in global cache
-        if newarch.version > self.stamp:                   # more recent than the operation stamp
+        if newarch.version > self.stamp.stamp:                   # more recent than the operation stamp
             raise AppExc("XCW", self.opName, self.org, fid)            
         return newarch
                

@@ -23,16 +23,17 @@ class Provider:
 
     pool = pymysqlpool.Pool(create_instance=_create_conn, max_count=settings.db['poolSize'], timeout=settings.db['timeOut'])
     lapseRefreshOnOff = 300000
-    onofStamp = Stamp()
+    onoffStamp = Stamp()
     onoffrep = {}
     
     def __init__(self, operation):
         try:
-            self.connection = Provider.pool.get()
             self.operation = operation
             self.org = operation.org
+            self.connection = Provider.pool.get()
+            # self.connection = connect(host=settings.db['host'], db=settings.db['db'], user=settings.db['user'], password=settings.db['password'], charset='utf8mb4', cursorclass=cursors.DictCursor)
         except Exception as e:
-            AppExc("XSQLCONX", [operation.opName, operation.org, e.message()])
+            AppExc("XSQLCONX", [operation.opName, operation.org, str(e)])
     
     def close(self) -> None:
         try:
@@ -63,7 +64,7 @@ class Provider:
         """
         sql = Provider.sqlonoff
         try:
-            lapse = self.operation.stamp.epoch - Provider.onofStamp.epoch
+            lapse = self.operation.stamp.epoch - Provider.onoffStamp.epoch
             if lapse > Provider.lapseRefreshOnOff:
                 with self.connection.cursor() as cursor:
                     cursor.execute(sql)
@@ -135,7 +136,6 @@ class Provider:
 
     sqlitems2a = " WHERE `itkey` = %s"
     sqlitems2b = " WHERE `itkey` >= %s and `itkey` <= %s"
-    sqlitems2c = " WHERE `itkey` = %s  AND `version` > %s"
     sqlitems2d = " WHERE `itkey` >= %s and `itkey` <= %s AND ((`version` > %s AND `dtcas` >= 0) OR (`version` > %s AND `dtcas` < 0))"
     sqlitems2e = " WHERE `itkey` >= %s and `itkey` <= %s AND `version` > %s AND `dtcas` >= 0"
     sqlitems2f = " WHERE `itkey` >= %s and `itkey` <= %s AND `version` < %s AND `dtcas` >= 0"
@@ -165,10 +165,10 @@ class Provider:
         """
         Retourne hdr : nécessaire pour savoir si le document existe
         """
-        sql = Provider.sqlitems1b + self.org + "_" + table + Provider.sqlitems2c
+        sql = Provider.sqlitems1b + self.org + "_" + table + Provider.sqlitems2a
         try:
             with self.connection.cursor() as cursor:
-                if cursor.execute(sql, (version, version, docid, version)) == 0:
+                if cursor.execute(sql, (version, version, docid)) == 0:
                     return (None, None)
                 row = cursor.fetchone()
                 return (Provider.meta(row), Provider.content(row))
@@ -379,26 +379,29 @@ class Provider:
         self._sql(sql, args)
                         
     sqlitemins = " (`itkey`, `version`, `dtcas`, `size`, `serial`, `serialGZ`) VALUES (%s, %s, %s, %s, %s, %s)"
-    sqlitemupd2 = " SET `version` = %s, `dtcas` = %s, `size` = %s WHERE `itkey` = %s"
+    sqlitemupd2 = " SET `version` = %s, `dtcas` = %s, `size` = %s WHERE `itkey` >= %s and `itkey` <= %s"
+    sqlitemupd3 = " SET `version` = %s, `dtcas` = %s, `size` = %s, `serial` = %s, `serialgz` = %s WHERE `itkey` >= %s and `itkey` <= %s"
 
     def _IUDitems(self, upd:Update) -> int:
         nbi = 0
         for u in upd.updates.values():
             nbi += 1
+            x = (self._itkey(upd.docid, u),)
+            x = x + x
             # c : 1:insert meta and content, 2:update meta only, 3:update meta and delete content, 4:update meta and content
             # u {"c":c, "cl":cl, "keys":keys, "meta":meta, "content":content}
             if u.c == 1:
                 args = (self._itkey(upd.docid, u),) + u.meta + Provider.contentarg(u.content)
                 sql = "INSERT INTO " + self.org + "_" + upd.table + Provider.sqlitemins
             elif u.c == 2:
-                args = u.meta + (self._itkey(upd.docid, u),)
-                sql = "UPDATE " + self.org + "_" + upd.table + Provider.sqlitemupd
+                args = u.meta + x 
+                sql = "UPDATE " + self.org + "_" + upd.table + Provider.sqlitemupd2
             elif u.c == 3:
-                args = u.meta + (None, None) + (self._itkey(upd.docid, u),)      
-                sql = "UPDATE " + self.org + "_" + upd.table + Provider.sqlitemupd
+                args = u.meta + (None, None) + x  
+                sql = "UPDATE " + self.org + "_" + upd.table + Provider.sqlitemupd3
             else:
-                args = u.meta + Provider.contentarg(u.content) + (self._itkey(upd.docid, u),)
-                sql = "UPDATE " + self.org + "_" + upd.table + Provider.sqlitemupd
+                args = u.meta + Provider.contentarg(u.content) + x 
+                sql = "UPDATE " + self.org + "_" + upd.table + Provider.sqlitemupd3
             self._sql(sql, args)
         
         for idxUpd in upd.indexes.values():

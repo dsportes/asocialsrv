@@ -8,6 +8,7 @@ import os, sys
 pyp = os.path.dirname(__file__)
 sys.path.insert(0, pyp)
 from root import application as app
+print("wsgi1.py Started", file=sys.stderr)
 
 def application(environ, start_response):
     result = app(environ, start_response)

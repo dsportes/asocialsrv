@@ -97,7 +97,7 @@ mime = MimeTypes()
 class Result:
     def __init__(self, op=None, notFound=False):    # op : Operation OU ExecCtc
         self.origin = op.origin if op is not None else None
-        self.respXCH = op.respXCH if op is not None else None
+        self.respXCH = op.respXCH if op is not None and hasattr(op, "respXCH") else None
         self.notFound = notFound
         self.mime = "application/octet-stream"
         self.bytes = b''
@@ -108,7 +108,7 @@ class Result:
         return self.json;
     
     def setOptions(self, reqOrigin):
-        self.origin = "*"
+        # self.origin = "*"
         self.origin = reqOrigin
         return self
     
@@ -165,7 +165,7 @@ class Operation:
         self.respXCH = None
         self.stamp = Stamp.fromEpoch(Stamp.epochNow())
         self.provider = None
-        self.provider = ExecCtx.getClass(settings.dbProvider[0], settings.dbProvider[1])(self)
+        self.provider = providerClass(self)
         self.checkOnOff()
         al.warn("Operation ==> " + self.opName + " " + self.stamp.toString())
 
@@ -206,7 +206,7 @@ class ExecCtx:
                 e['classes'][cl] = c
             return c        
     
-    def __init__(self, environ, opPath): # opPath : path après /$op/4.7/org/base.InfoOP
+    def __init__(self, environ, opPath, origin, reqXCH): # opPath : path après /$op/4.7/org/base.InfoOP
         self.error = None
         self.origin = None
         self.app = None
@@ -218,22 +218,11 @@ class ExecCtx:
         self.inputData = {}
         self.param = {}
         self.uiba = None    
-        self.org = None    
+        self.org = None
+        self.origin = origin
+        self.reqXCH = reqXCH
 
         try:
-            environ.setdefault('QUERY_STRING', '')
-            xch = environ.get("HTTP_X_CUSTOM_HEADER", None)
-            if xch is None:
-                raise AppExc("SECORIG1")
-            try:
-                self.reqXCH = json.loads(xch)
-            except:
-                self.reqXCH = None
-            if self.reqXCH is None:
-                raise AppExc("SECORIG1")
-            self.origin = self.reqXCH.get("origin", "?")
-            if self.origin not in cfg.origins:
-                raise AppExc("SECORIG2", [self.origin])
             self.app = self.reqXCH.get('app', None)
             self.uiba = cfg.uiba.get(self.app, None)
             if self.uiba is None:
@@ -305,7 +294,7 @@ class ExecCtx:
                 if self.operation is not None:
                     self.operation.close()
                 if n == 2 or not ex.toRetry:
-                    err = {'err':ex.err, 'info':ex.msg, 'args':ex.args, 'phase':self.phase, 'tb':traceback.format_exc()}
+                    err = {'err':ex.err, 'info':ex.msg, 'args':ex.args, 'phase':self.phase} # , 'tb':traceback.format_exc()
                     al.warn(err)
                     return Result(self).setJson(err)
                 else:
@@ -322,7 +311,23 @@ def homeShortcut(sc = None):
     return cfg.homeShortcuts["?"] if sc is None else cfg.homeShortcuts.get(sc, None)
 
 class Url:
+    def xch(self, environ):
+        xch = environ.get("HTTP_X_CUSTOM_HEADER", None)
+        if xch is None:
+            raise AppExc("SECORIG1")
+        try:
+            self.reqXCH = json.loads(xch)
+        except:
+            self.reqXCH = None
+        if self.reqXCH is None:
+            raise AppExc("SECORIG1")
+        self.origin = self.reqXCH.get("origin", "?")
+        if self.origin not in cfg.origins:
+            raise AppExc("SECORIG2", [self.origin])
+
+    
     def __init__(self, environ):
+        environ.setdefault('QUERY_STRING', '')
         p = environ["PATH_INFO"]    # /cp/prod-home
         self.pathInfo = p
         self.cp = cfg.cp
@@ -350,6 +355,7 @@ class Url:
         if p.startswith("/$info/"): # info à propos d'une organisation
             self.type = 2
             self.org = p[7:]
+            self.xch(environ)
             return
 
         if p.startswith("/$op/"):   # Appel d'une opération /$op/4.7/mod.Op/org/a/b
@@ -357,6 +363,7 @@ class Url:
             x = p[6:]
             i = x.find("/")
             self.opPath = "" if i == -1 else x[i + 1:]  # mod.Op/org/a/b
+            self.xch(environ)
             return
 
         i = p.find("$ui/")
@@ -433,10 +440,7 @@ class Url:
                         self.breq = None
 
 def uiPath(resbuild, resname):
-    p = cfg.uipath + "/" + resname
-    if cfg.uipath.endswith("/"):
-        p = cfg.uipath + resbuild + "/" + resname
-    return p
+    return cfg.uipath + "/" + resbuild + "/" + resname if cfg.BUILD else cfg.uipath + "/" + resname
            
 def getSwjs():
     build = str(cfg.inb) + "." + str(cfg.uib[0])
@@ -470,8 +474,8 @@ def ping():
     stamp = Stamp.fromEpoch(Stamp.epochNow())
     return Result().setText(stamp.toString())
 
-def info(org):
-    return Result().setJson({"inb":cfg.inb, "uib":cfg.uib, "opsite":cfg.opsites(org)})
+def info(url):
+    return Result(url).setJson({"inb":cfg.inb, "uib":cfg.uib, "opsite":cfg.opsites(url.org)})
 
 def getRes(url):
     resname = url.resname
@@ -479,7 +483,7 @@ def getRes(url):
     ext = url.ext
     p = uiPath(resbuild, resname)
     try:
-        if cfg.useBuild or ext != "js":
+        if cfg.BUILD or ext != "js":
             with open(p, "rb") as f:
                 return Result().setBytes(f.read(), ext)
         else:
@@ -537,7 +541,7 @@ def getHome(url):
         done = False
         href = "/" + cpui + "/" + build + "/"
         base = "<base href=\"" + href + "\" data-build=\"" + build + "\" data-maker=\"WebUI-" + url.stamp.toString() + "\">\n"
-        al.info("tag base : " + base)
+        # al.info("tag base : " + base)
         with open(p, "r", encoding='utf-8') as ins:
             for line in ins:
                 if done:
@@ -577,7 +581,7 @@ dics.set("fr", "org", "L'organisation {0} n'est pas hébergée")
 
 dics.set("fr", "XSQLCNX", "Incident de connexion à la base de données. Opération:{0} Org:{1} Cause:{2}")
 
-if cfg.mode == 2:   # mettre dans le path le répertoire qui héberge la build courante du serveur OP
+if cfg.OPSRV:   # mettre dans le path le répertoire qui héberge la build courante du serveur OP
     pyp = os.path.dirname(__file__)
     sys.path.insert(0, pyp + "/" + str(cfg.inb) + "." + str(cfg.opb[0]))
 
@@ -598,13 +602,13 @@ def application(environ, start_response):
         if url.type == 1:
             return getSwjs()
         if url.type == 2:
-            return info(url.org)
+            return info(url)
         if url.type == 3:
             return getHome(url)
         if url.type == 4:
             return getRes(url)
         if url.type == 5:
-            return ExecCtx(environ, url.opPath).go()
+            return ExecCtx(environ, url.opPath, url.origin, url.reqXCH).go()
         if url.type == 6:
             return getSwHtml()
         if url.type == 7:
@@ -799,3 +803,14 @@ class Stamp:
         l3c = st3.stamp
 
 # Stamp.test()
+
+providerClass = None
+
+try:
+    providerModule = importlib.import_module(settings.dbProvider[0])
+    providerClass = getattr(providerModule, settings.dbProvider[1])
+    if providerClass is None:
+        al.error("Provider class NON TROUVEE : " + settings.dbProvider[0] + "." + settings.dbProvider[1])
+except Exception as e:
+    al.error("Provider class NON TROUVEE : " + settings.dbProvider[0] + "." + settings.dbProvider[1] + str(e))
+
