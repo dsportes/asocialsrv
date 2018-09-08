@@ -1017,7 +1017,7 @@ class DOperation(Operation):
             self._accTkt.t[6] = (t1 - t0) / 1000
         if jsonResp is not None:
             if self._accTkt.tktid is not None:
-                jsonResp["accTkt"] = self._accTkt.tktid
+                jsonResp["accTkt"] = self._accTkt.toDict()
         if self._accTkt.tktid is not None:
             self._accTkt.t[1] = result.finalLength() / 1000
             self.provider.setAccTkt(self._accTkt)
@@ -1081,3 +1081,12 @@ class AccTkt:
         self.tktid = None
         self.table = None
     
+    def toDict(self) -> Dict: # do not serialize, keys, meta data (starting with _), None and 0 values
+        d = {}
+        for x in self.__dict__:
+            if not x.startswith("_"):
+                v = self.__dict__[x]
+                if v is not None and not (isinstance(v, int) and v == 0):
+                    d[x] = v
+        return d
+

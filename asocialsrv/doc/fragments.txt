@@ -5,6 +5,15 @@ taskkill /PID 26356 /F
 netstat -nlp | grep :8090 // Linux
 kill 9999
  
+Build : OP server debug
+127.0.0.1/cp/$ui/1.1/index.html?$org=prod&$home=index&$build=1.1&$mode=0&$cp=cp&$appstore=http://127.0.0.1:8000
+
+Build : OP server prod
+127.0.0.1/cp/$ui/1.1/index.html?$org=prod&$home=index&$build=1.1&$mode=0&$cp=cp&$appstore=http://127.0.0.1:80/cp
+
+Test UI : OP server debug
+127.0.0.1:8081/index.html?$org=prod&$home=index&$build=1.1&$mode=0&$cp=cp&$appstore=http://127.0.0.1:8000
+
 
 import ptvsd
 if c2 == 0:

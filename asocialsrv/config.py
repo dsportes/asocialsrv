@@ -15,7 +15,7 @@ class Cfg:
         self.OPSRV = True
                 
         # Log level
-        self.loglevel = 1
+        self.loglevel = 0
         
         # context-path : sert au magasin UI pour générer le $sw.js et les pages d'accueil
         self.cp = "cp"
@@ -53,8 +53,14 @@ class Cfg:
         # applications acceptées et leurs contraintes de build (minimale et non boguées)
         self.uiba = {"A":[1], "B":[3, 7, 8]}
         
+        # URL du serveur statique de l'appstaore
+        if self.BUILD:
+            self.static_appstore = "http://127.0.0.1/cp/$ui/"
+        else:
+            self.static_appstore = "http://127.0.0.1:8081/"
+        
         self.orgs1 = ["prod", "demo"]
-        self.url1 = "http://localhost:8000/cp/$op/" if OPDEBUG else "http://localhost:80/cp/$op/"
+        self.url1 = "http://127.0.0.1:8000/cp/$op/" if OPDEBUG else "http://127.0.0.1/cp/$op/"
         #self.url1 = "https://test.sportes.fr/cp/$op/"
         
     def opsites(self, org): # URL des serveurs op pour chaque organisation
