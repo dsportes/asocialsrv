@@ -384,14 +384,13 @@ class Url:
             else:
                 if environ['SERVER_PORT'] != '80':
                     u += ':' + environ['SERVER_PORT']
-        sn = environ.get('SCRIPT_NAME', '')
-        u += sn
-        al.warn(sn) 
+        al.warn(u) 
         return self.getHome(p, environ["QUERY_STRING"], u)                          # c'est une page d'accueil
 
     def getRes(self, p):
-        build = str(cfg.inb) + "." + str(cfg.uib[0])
-        path = self.uiPath(build, p[1:])
+        #build = str(cfg.inb) + "." + str(cfg.uib[0])
+        #path = self.uiPath(build, p[1:])
+        path = pyp + p
         i = p.rfind(".")
         ext = "txt" if i == -1 else p[i + 1:]
         try:
@@ -405,7 +404,7 @@ class Url:
            
     def getSwjs(self):
         build = str(cfg.inb) + "." + str(cfg.uib[0])
-        p = self.uiPath(build, "base/sw.js")
+        swjspath = pyp + "/sw.js"
         dx = self.uiPath(build, "")
         lx = len(dx)
         try:
@@ -413,26 +412,28 @@ class Url:
             y = "/$ui/" if len(cfg.cp) == 0 else "/" + cfg.cp + "/$ui/"
             x = y + build +'/'
             for subdir, dirs, files in os.walk(dx):
+                subd = subdir.replace("\\", "/")
                 for file in files:
-                    if subdir.endswith("/"):
+                    if subd.endswith("/"):
                         if file.startswith("."):
                             continue
-                        filepath = (subdir + file)[lx:]
+                        filepath = (subd + file)[lx:]
                     else:
-                        filepath = (subdir + "/" + file)[lx:]
+                        filepath = (subd + "/" + file)[lx:]
                     lst.append("\"" + x + filepath + "\"")
             d1 = "const shortcuts = " + json.dumps(cfg.homeShortcuts) + ";\n"
             d2 = "const inb = " + str(cfg.inb) + ";\nconst uib = " +  str(cfg.uib) + ";\nconst cp = \"" + cfg.cp + "\";\n"
-            d3 = "const CP = cp ? '/' + cp + '/' : '/';\nconst CPOP = CP + '$op/';\nconst CPUI = CP + '$ui/';\nconst BC = inb + '.' + uib[0];\nconst lres = [\n"
-            f = open(p, "rb")
+            d3 = "const dyn_appstore = \"" + cfg.dyn_appstore + "\";\nconst static_appstore = \"" + cfg.static_appstore + "\";\nconst lres = [\n"
+            f = open(swjspath, "rb")
             t = f.read().decode("utf-8")
             text = d1 + d2 + d3 + ",\n".join(lst) + "\n];\n" + t
             return Result(self).setText(text, "js")
         except Exception as e:
-            raise AppExc("swjs", [p, str(e)])
+            raise AppExc("swjs", [swjspath, str(e)])
 
     def getHome(self, p, qs, u):
         # al.error("path1 : " + p)
+        ext = ""
         mode = 1
         breq = None        
 
@@ -496,8 +497,8 @@ class Url:
                     raise AppExc("mineur", [cfg.inb, str(cfg.uib), breq[1]], lang)
                 
         # Build :  127.0.0.1/cp/$ui/    1.1/index.html?$org=prod&$home=index&$build=1.1&$mode=0&$cp=cp&$appstore=http://127.0.0.1:8000/     
-        # Dev : 127.0.0.1:8081/         index.html?$org=prod&$home=index&$build=1.1&$mode=0&$cp=cp&$appstore=http://127.0.0.1:8000/     
-        x = "$build=" + build + "&$org=" + org + "&$home=" + home + "&$mode=" + str(mode) + "&$cp=" + cfg.cp + "&$appstore=" + u   
+        # Dev : 127.0.0.1:8081/         index.html?$org=prod&$home=index&$build=1.1&$mode=0&$cp=cp&$appstore=http://127.0.0.1:8000/cp/     
+        x = "$build=" + build + "&$org=" + org + "&$home=" + home + "&$mode=" + str(mode) + "&$cp=" + cfg.cp + "&$appstore=" + cfg.dyn_appstore + "/&$maker=" + cfg.dyn_appstore + "/"
         redir = cfg.static_appstore + (build2 + "/" if cfg.BUILD else "") + home + ".html" + (qs + "&" if len(qs) != 0 else "?") + x
         
         page = "<html><head><meta http-equiv='refresh' content='0;URL=" + redir + "'></head><body></body></html>"
@@ -528,8 +529,8 @@ dics.set("fr", "org", "L'organisation {0} n'est pas hébergée")
 
 dics.set("fr", "XSQLCNX", "Incident de connexion à la base de données. Opération:{0} Org:{1} Cause:{2}")
 
+pyp = os.path.dirname(__file__)
 if cfg.OPSRV:   # mettre dans le path le répertoire qui héberge la build courante du serveur OP
-    pyp = os.path.dirname(__file__)
     sys.path.insert(0, pyp + "/" + str(cfg.inb) + "." + str(cfg.opb[0]))
 
 from settings import settings
