@@ -338,7 +338,7 @@ class Url:
         l = len(self.cp)
         if l != 0 and p.startswith("/" + self.cp + "/"):
             p = p[l + 1:]
-        al.info(p)
+        al.warn("Origin:" + self.origin + " Path_Info:" + p)
 
         if p == "/favicon.ico":
             return self.getRes(p)
@@ -363,7 +363,7 @@ class Url:
         
         if p.startswith("/$info/"): # info à propos d'une organisation
             org = p[7:]
-            self.xch(environ)
+            # self.xch(environ)
             return Result(self).setJson({"inb":cfg.inb, "uib":cfg.uib, "opsite":cfg.opsites(org)})
         
         if p.startswith("/$op/"):   # Appel d'une opération /$op/4.7/mod.Op/org/a/b

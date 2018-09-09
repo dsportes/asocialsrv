@@ -129,10 +129,10 @@ const fetchTO = async function(req, timeout) {
 		}
 		/*
 		 * exception : Cannot construct a Request with a Request whose mode is 'navigate' and a non-empty RequestInit
-		 * quand on fetch une page. D'ou ne passer que l'url quand on fetch une ressouce (timeout != 0)
+		 * quand on fetch une page. 
+		 * D'ou ne passer que l'url quand on fetch une ressouce (timeout != 0)
 		 */
 		resp = await fetch(timeout ? req.url : req, {signal});
-//		resp = await fetch(req, {signal});
 		if (timeout && tim) 
 			clearTimeout(tim);
 		if (resp && resp.ok) {
@@ -161,16 +161,14 @@ const fetchFromCaches = async function(req, build) {
 	let html = u.endsWith(".html");
 	let resp = await caches.match(u);
 	if (resp && resp.ok) {
-		if (html)
-			resp.headers.append("Origin", static_appstore)
+		// if (html) resp.headers.append("Origin", static_appstore)
 		if (TRACEON2) console.log("fetch OK du CACHE : " + req.url);
 		return resp;
 	}
 	resp = await fetchTO(req.clone(), TIME_OUT_MS);
 	if (!resp || !resp.ok || !build)
 		return resp;
-	if (html)
-		resp.headers.append("Origin", static_appstore)
+	// if (html) resp.headers.append("Origin", static_appstore)
 	let cachename = (cp ? cp : "root") + "_" + build;
 	let cache = await caches.open(cachename);
 	await cache.put(req.clone, resp.clone());
@@ -229,7 +227,7 @@ this.addEventListener('fetch', event => {
 		return;
 	}
 
-	if (path.startsWith(CP + "$info/") || path == CP + "$swjs" || path == CP + "$sw.html") {
+	if (path.startsWith(CP + "$info/") || path == CP + "$swjs" || path.startsWith(CP + "$sw.html")) {
 		event.respondWith(fetchTO(event.request, TIME_OUT_MS));
 		return;
 	}
@@ -260,8 +258,10 @@ this.addEventListener('fetch', event => {
 		let h = analyseHome(home1, qs, shortcuts);
 		// {home:home, org:org, build:build, mode:mode}
 		
-		// redirect 
-		event.respondWith(fetchHome(h.org, h.home, h.build, h.mode, qs));							
+		if (h.mode == 2) // redirect 
+			event.respondWith(fetchHome(h.org, h.home, h.build, h.mode, qs));
+		else // recharge depuis le magasin d'application
+			event.respondWith(fetchTO(event.request, TIME_OUT_MS));
 		return;
 	}
 	
