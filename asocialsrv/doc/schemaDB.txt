@@ -78,3 +78,11 @@ CREATE TABLE `prod_dhx` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 
 
+
+CREATE TABLE onoff (
+   org varchar(16) NOT NULL,
+   ison int NOT NULL,
+   info varchar(512) DEFAULT NULL,
+   PRIMARY KEY (org)
+ )
+ 

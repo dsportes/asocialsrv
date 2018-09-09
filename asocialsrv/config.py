@@ -45,11 +45,11 @@ class Cfg:
                 self.uipath = "C:/git/asocialui/asocialui/build"
         else:
             if ENV == 1:
-                self.uipath = "/home/daniel/git/asocialui/asocialui"    # dans environnement de test
+                self.uipath = "/home/daniel/git/asocialui/asocialui"    # dans environnement de sqlselector
             elif ENV == 2:           
-                self.uipath = "C:/git/asocialui/asocialui"    # dans environnement de test            
+                self.uipath = "C:/git/asocialui/asocialui"    # dans environnement de sqlselector            
         
-        self.origins = ["http://localhost", "http://localhost:8000", "http://localhost:8081", "http://127.0.0.1:8081", "http://127.0.0.1:8000", "http://localhost", "http://127.0.0.1", "https://test.sportes.fr"]
+        self.origins = ["http://localhost", "http://localhost:8000", "http://localhost:8081", "http://127.0.0.1:8081", "http://127.0.0.1:8000", "http://localhost", "http://127.0.0.1", "https://sqlselector.sportes.fr"]
         
         # versions supportées du serveur de traitement
         self.opb = [1]
@@ -69,7 +69,7 @@ class Cfg:
         
         self.orgs1 = ["prod", "demo"]
         self.url1 = "http://127.0.0.1:8000/$op/" if OPDEBUG else "http://127.0.0.1/cp/$op/"
-        #self.url1 = "https://test.sportes.fr/cp/$op/"
+        #self.url1 = "https://sqlselector.sportes.fr/cp/$op/"
         
     def opsites(self, org): # URL des serveurs op pour chaque organisation
         return self.url1 if org in self.orgs1 else ""

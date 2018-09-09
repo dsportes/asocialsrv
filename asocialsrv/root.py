@@ -154,7 +154,10 @@ class Result:
         return '404 Not Found' if self.notFound else '200 OK'
 
 class Operation:
+    sqlselector = None
     def __init__(self, execCtx):
+        if Operation.sqlselector is None:
+            Operation.sqlselector = getattr(importlib.__import__("sqlselector"), "sqlselector")
         self.execCtx = execCtx
         self.origin = execCtx.origin
         self.param = execCtx.param
@@ -164,7 +167,7 @@ class Operation:
         self.reqXCH = execCtx.reqXCH
         self.stamp = execCtx.stamp
         self.respXCH = None
-        self.provider = providerClass(self)
+        self.provider = Operation.sqlselector.get(self)
         self.checkOnOff()
         al.info("Operation ==> " + self.opName + " " + self.stamp.toString())
 
@@ -189,7 +192,7 @@ class Operation:
 class ExecCtx:
     modules = {}
     modLock = Lock()
-    
+        
     def getClass(mod, cl):  # self.operation = getattr(module, cl)(self)
         with ExecCtx.modLock:
             e = ExecCtx.modules.get(mod, None)
@@ -349,7 +352,7 @@ class Url:
         if p == "/$swjs":           # service worker script
             return self.getSwjs()
         
-        if p == "/$sw.html":        # test build courante sw
+        if p == "/$sw.html":        # sqlselector build courante sw
             build = str(cfg.inb) + "." + str(cfg.uib[0])
             p = self.uiPath(build, "$sw.html")
             try:
@@ -532,8 +535,6 @@ dics.set("fr", "XSQLCNX", "Incident de connexion à la base de données. Opérat
 pyp = os.path.dirname(__file__)
 if cfg.OPSRV:   # mettre dans le path le répertoire qui héberge la build courante du serveur OP
     sys.path.insert(0, pyp + "/" + str(cfg.inb) + "." + str(cfg.opb[0]))
-
-from settings import settings
 
 def application(environ, start_response):
     method = environ.get("REQUEST_METHOD", "")
@@ -733,15 +734,5 @@ class Stamp:
         l3b = st3.epoch
         l3c = st3.stamp
 
-# Stamp.test()
-
-providerClass = None
-
-try:
-    providerModule = importlib.import_module(settings.dbProvider[0])
-    providerClass = getattr(providerModule, settings.dbProvider[1])
-    if providerClass is None:
-        al.error("Provider class NON TROUVEE : " + settings.dbProvider[0] + "." + settings.dbProvider[1])
-except Exception as e:
-    al.error("Provider class NON TROUVEE : " + settings.dbProvider[0] + "." + settings.dbProvider[1] + str(e))
+# Stamp.sqlselector()    
 
