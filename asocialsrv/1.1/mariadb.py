@@ -18,7 +18,7 @@ class Provider:
     dics.set("fr", "XCV", "Trop de contention détectée à la validation. Opération:{0} Org:{1} Document:{2} ")
     
     def _create_conn() -> Connection:
-        return connect(host=settings.db['host'], db=settings.db['db'], user=settings.db['user'], password=settings.db['password'],
+        return connect(host=settings.db['host'], database=settings.db['database'], user=settings.db['user'], password=settings.db['password'],
                              charset='utf8mb4', cursorclass=cursors.DictCursor)
 
     pool = pymysqlpool.Pool(create_instance=_create_conn, max_count=settings.db['poolSize'], timeout=settings.db['timeOut'])

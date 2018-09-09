@@ -6,10 +6,10 @@ class Cfg:
 
         # Si OPDEBUG, l'URL est celle du serveur de debug, sinon c'est l'URL du frontal Aoache 
         OPDEBUG = True
-        ASDEBUG = False
+        ASDEBUG = True
 
         # Si True magasion d'application intercale le numéro de version pour obtenir le path des ressources sur disque
-        self.BUILD = True
+        self.BUILD = False
         
         # Si True, est serveur d'opération : son path inclut le répertoire versionné des opérations
         # Si FALSE, ne joue QUE le rôle de magasin d'application
@@ -19,7 +19,10 @@ class Cfg:
         self.loglevel = 0
         
         # context-path : sert au magasin UI pour générer le $sw.js et les pages d'accueil
-        self.cp = "cp"
+        if ASDEBUG:
+            self.cp = ""
+        else:
+            self.cp = "cp"
                 
         # niveau d'intrerface
         self.inb = 1
@@ -39,12 +42,12 @@ class Cfg:
             if ENV == 1:
                 self.uipath = "/home/daniel/git/asocialui/asocialui/build"
             elif ENV == 2:
-                self.uipath = "C:/eclipse/git/asocialui/asocialui/build"
+                self.uipath = "C:/git/asocialui/asocialui/build"
         else:
             if ENV == 1:
                 self.uipath = "/home/daniel/git/asocialui/asocialui"    # dans environnement de test
             elif ENV == 2:           
-                self.uipath = "C:/eclipse/git/asocialui/asocialui"    # dans environnement de test            
+                self.uipath = "C:/git/asocialui/asocialui"    # dans environnement de test            
         
         self.origins = ["http://localhost", "http://localhost:8000", "http://localhost:8081", "http://127.0.0.1:8081", "http://127.0.0.1:8000", "http://localhost", "http://127.0.0.1", "https://test.sportes.fr"]
         
@@ -54,10 +57,10 @@ class Cfg:
         # applications acceptées et leurs contraintes de build (minimale et non boguées)
         self.uiba = {"A":[1], "B":[3, 7, 8]}
         
-        # URL du serveur statique de l'appstaore
+        # URL du serveur statique de l'appstaore. AVEC "/" à la fin !!!
         if self.BUILD:
             self.static_appstore = "http://127.0.0.1/" + self.cp + "/$ui/"
-            self.dyn_appstore = "http://127.0.0.1/" + self.cp
+            self.dyn_appstore = "http://127.0.0.1/" + self.cp + "/"
             if ASDEBUG:
                 self.dyn_appstore = "http://127.0.0.1:8000/"
         else:
@@ -65,7 +68,7 @@ class Cfg:
             self.dyn_appstore = "http://127.0.0.1:8000/"
         
         self.orgs1 = ["prod", "demo"]
-        self.url1 = "http://127.0.0.1:8000/cp/$op/" if OPDEBUG else "http://127.0.0.1/cp/$op/"
+        self.url1 = "http://127.0.0.1:8000/$op/" if OPDEBUG else "http://127.0.0.1/cp/$op/"
         #self.url1 = "https://test.sportes.fr/cp/$op/"
         
     def opsites(self, org): # URL des serveurs op pour chaque organisation

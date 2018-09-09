@@ -498,7 +498,7 @@ class Url:
                 
         # Build :  127.0.0.1/cp/$ui/    1.1/index.html?$org=prod&$home=index&$build=1.1&$mode=0&$cp=cp&$appstore=http://127.0.0.1:8000/     
         # Dev : 127.0.0.1:8081/         index.html?$org=prod&$home=index&$build=1.1&$mode=0&$cp=cp&$appstore=http://127.0.0.1:8000/cp/     
-        x = "$build=" + build + "&$org=" + org + "&$home=" + home + "&$mode=" + str(mode) + "&$cp=" + cfg.cp + "&$appstore=" + cfg.dyn_appstore + "/&$maker=" + cfg.dyn_appstore + "/"
+        x = "$build=" + build + "&$org=" + org + "&$home=" + home + "&$mode=" + str(mode) + "&$cp=" + cfg.cp + "&$appstore=" + cfg.dyn_appstore + "&$maker=" + cfg.dyn_appstore 
         redir = cfg.static_appstore + (build2 + "/" if cfg.BUILD else "") + home + ".html" + (qs + "&" if len(qs) != 0 else "?") + x
         
         page = "<html><head><meta http-equiv='refresh' content='0;URL=" + redir + "'></head><body></body></html>"
