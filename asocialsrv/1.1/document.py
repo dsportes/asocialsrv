@@ -1,5 +1,6 @@
 import json
-from root import Stamp, Operation, dics, AppExc, Result, ExecCtx
+from util import Stamp, dics, AppExc, Result
+from root import Operation, ExecCtx
 from threading import Lock
 from settings import settings
 from typing import Dict, Tuple, Any, Iterable, Type, List

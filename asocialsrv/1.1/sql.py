@@ -1,4 +1,4 @@
-from root import al, dics, AppExc, Stamp
+from util import al, dics, AppExc, Stamp, FakeOp
 from document import DocumentArchive, DocumentDescr, LocalUpdate, Update, ValidationList, AccTkt, Meta, ClKeys
 import json
 from gzip import compress, decompress
@@ -9,12 +9,6 @@ PG = settings.PG
     
 dics.set("fr", "XSQL1", "Incident d'accès à la base de données. Opération:{0} Org:{1} SQL:{2} Cause:{3}")
 dics.set("fr", "XCV", "Trop de contention détectée à la validation. Opération:{0} Org:{1} Document:{2} ")
-
-class FakeOp:
-    def __init__(self):
-        self.org = "prod"
-        self.opName = "test"
-        self.stamp = Stamp.fromEpoch(Stamp.epochNow())
 
 class OnOff:
     def __init__(self, ison:int, info:str): # -> OnOff:

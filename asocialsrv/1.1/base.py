@@ -1,5 +1,5 @@
-from config import cfg
-from root import al, dics, AppExc, Result, Operation, Stamp
+from util import Result
+from root import Operation
 
 class InfoOP(Operation):
     def __init__(self, execCtx):
