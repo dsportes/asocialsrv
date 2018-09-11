@@ -199,7 +199,7 @@ class Url:
             p = p[l + 1:]
         al.warn("Origin:" + self.origin + " Path_Info:" + p)
 
-        if p == "/favicon.ico":
+        if p == "/favicon.ico" or p == "/sw.html":
             return self.getRes(p)
 
         if p == "/$ping":             # service worker script
@@ -208,6 +208,7 @@ class Url:
         if p == "/$swjs":           # service worker script
             return self.getSwjs()
         
+        """
         if p == "/$sw.html":        # sqlselector build courante sw
             build = str(cfg.inb) + "." + str(cfg.uib[0])
             p = self.uiPath(build, "$sw.html")
@@ -216,7 +217,8 @@ class Url:
                 return Result(self).setBytes(f.read(), "html")
             except Exception as e:
                 raise AppExc("notFound", [p, str(e)])
-
+        """
+        
         if p == "/$infoSW":         # DEVRAIT être intercepté par le sscript du service worker
             return Result(self).setJson({"err":"SW not active"})
         

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<base href="./" >
+<meta charset="utf-8">
+<link rel="icon" href="./favicon.ico">
+</head>
+<body>
+<!--
+<button onclick="doit();">DoIt</button>
+-->
+
+<script>
+// <!--
+getInfoSW = async function(ux) {
+	try {
+		let controller = new AbortController();
+		let signal = controller.signal;
+		let tim = setTimeout(() => { controller.abort(); }, 3000);
+		const resp = await fetch(ux, {signal});
+		if (tim) clearTimeout(tim);
+		if (resp && resp.ok)
+			return await resp.json();
+		else
+			return "";
+	} catch(err) {
+		return "";
+	}
+}
+
+doit = async function() {
+	if (navigator.serviceWorker.controller) {
+		let qs = {}
+		let q = window.location.search.substring(1).split("&");
+		for(let i = 0, s = null; s = q[i]; i++) {
+			let j = s.indexOf("=");
+			qs[s.substring(0,j)] = s.substring(j + 1);
+		}
+		let n = qs["n"] ? parseInt(qs["n"], 10) + 1 : 1;
+		let u = qs["u"] ? decodeURIComponent(qs["u"]) : "http://127.0.0.1/cp/$sw.html"
+		let b = qs["b"] ? qs["b"] : "0.0";
+		let p = window.location.origin + window.location.pathname;
+		let ux = p.substring(0, p.length - "$sw.html".length) + "$infoSW";
+		let info = await getInfoSW(ux);
+		if (info) {
+			swb = info.inb + "." + info.uib[0];
+			if (n > 3 && b == swb) // n > 1 pour voir les sabliers
+				window.location = u;
+			else {
+				let txt = "<!doctype html><html><head><meta charset='utf-8'></head><body><p id='msg' style='font-size:16px'></p>\n<script>\nlet n = " + n
+					+ "; let x = ''; let c = String.fromCharCode(9203); for(let i = 0; i < n; i++) x += c;\ndocument.getElementById('msg').innerHTML = x;\n"
+					+ "setTimeout(function(){ window.location = '" + u + "';}, 2000);</script>\n</body></html>";
+				const encoder = new TextEncoder("utf-8");
+				window.location = URL.createObjectURL(new Blob([encoder.encode(txt)], {type : 'text/html'}));
+			}
+		}
+	}
+}
+
+doit();
+// -->
+</script>
+</body>
+</html>

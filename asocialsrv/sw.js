@@ -161,14 +161,12 @@ const fetchFromCaches = async function(req, build) {
 	let html = u.endsWith(".html");
 	let resp = await caches.match(u);
 	if (resp && resp.ok) {
-		// if (html) resp.headers.append("Origin", static_appstore)
 		if (TRACEON2) console.log("fetch OK du CACHE : " + req.url);
 		return resp;
 	}
 	resp = await fetchTO(req.clone(), TIME_OUT_MS);
 	if (!resp || !resp.ok || !build)
 		return resp;
-	// if (html) resp.headers.append("Origin", static_appstore)
 	let cachename = (cp ? cp : "root") + "_" + build;
 	let cache = await caches.open(cachename);
 	await cache.put(req.clone, resp.clone());
@@ -322,7 +320,7 @@ const analyseHome = function(home1, qs, shortcuts) {
 	        }
 	    }
 	}
-	build = "" + (breq ? breq[0] : inb) + "." + (breq ? breq[1] : uib[0])
+	build = "" + inb + "." + (breq ? breq[1] : uib[0])
 	return {home:home, org:org, mode:mode, build:build}
 }
 
