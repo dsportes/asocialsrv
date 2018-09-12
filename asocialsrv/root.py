@@ -10,10 +10,7 @@ if cfg.OPSRV:   # mettre dans le path le répertoire qui héberge la build coura
 from settings import sqlselector
 
 class Operation:
-#    sqlselector = None
     def __init__(self, execCtx):
-#        if Operation.sqlselector is None:
-#            Operation.sqlselector = getattr(importlib.__import__("sqlselector"), "sqlselector")
         self.execCtx = execCtx
         self.origin = execCtx.origin
         self.param = execCtx.param
@@ -85,7 +82,7 @@ class ExecCtx:
             self.app = self.reqXCH.get('app', None)
             self.uiba = cfg.uiba.get(self.app, None)
             if self.uiba is None:
-                raise AppExc("OFF0")
+                raise AppExc("OFF0") # TODO : pas définie
             majeur = self.reqXCH.get("inb", 0)
             mineur = self.reqXCH.get("uib", 0)
             if majeur != cfg.inb or mineur < self.uiba[0] or mineur in self.uiba[1:]:
@@ -127,7 +124,7 @@ class ExecCtx:
                 raise AppExc("BOPNAME", [self.opName, str(e)])
                 
         except AppExc as ex:
-            err = {'err':ex.err, 'info':ex.msg, 'args':ex.args, 'phase':self.phase, 'tb':traceback.format_exc()}
+            err = {'err':ex.err, 'info':ex.msg, 'args':ex.args, 'phase':self.phase}
             al.warn(err)
             self.error = Result(self).setJson(err)
         except Exception as e:
@@ -160,6 +157,7 @@ class ExecCtx:
                     return Result(self).setJson(err)
                 else:
                     n += 1
+                    # TODO attente fonction de n
             except Exception:
                 if self.operation is not None:
                     self.operation.close()
