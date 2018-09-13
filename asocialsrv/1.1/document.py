@@ -54,7 +54,7 @@ class ItemDescr:
         assert (dd is not None), "DocumentClass not registered"
         assert (ItemClass.__name__ not in dd.itemDescrByCls), "ItemClass is already registered"
         assert code is not None and isinstance(code, str) and code not in dd.itemDescrByCode and len(code) > 0, "code is None or not a string or empty or is already registered"
-        assert (indexes is None or isinstance(indexes, tuple))
+        assert (indexes is None or isinstance(indexes, tuple)), "indexes is not an array of indexes"
         self.documentDescr = dd
         self.cls = ItemClass
         ItemClass._descr = self
@@ -139,7 +139,7 @@ class LocalUpdate:
         self.keys = keys
         self.meta = meta
         self.content = content
-        
+
 class DocumentArchive:
     """
     A DocumentArchive instance is a snapshot of a document given by a couple table / docid
@@ -166,15 +166,18 @@ class DocumentArchive:
         return self.descr.table + "/" + self.docid + "@" + cl + str(keys)
         
     def addItem(self, cl:str, keys:Keys, meta:Meta, content:str) -> None:
+        if cl == "hdr":
+            self.version = meta[0]
+            self.dtcas = meta[1]
+            self.size = meta[2]
+
         if meta[2] == 0:
             v = (meta, None)        
         else:
             assert content is not None and isinstance(content, str) and len(content) >= 2, "Invalid content for " + self.id2(cl, keys)
             v = (meta, content)
-        if cl == "hdr":
-            self.version = meta[0]
-            self.dtcas = meta[1]
-            self.size = meta[2]
+            
+        if cl == "":
             self.hdr = v
         else:
             self.items[(cl,keys)] = v
@@ -183,8 +186,7 @@ class DocumentArchive:
         return self.items.keys()
     
     def getItem(self, clkeys:ClKeys):
-        return self.items.get(clkeys, None)
-    
+        return self.items.get(clkeys, None)        
         
 class Document:
     """
@@ -201,7 +203,7 @@ class Document:
     _byTable = {}
     DELHISTORYINDAYS = 30
     
-    def filterSyncItem(self, operation:Operation, fargs:Dict, docid:str, clstr, keys:Keys, version:int, dtcas:int, size:int, content:str) -> str:
+    def filterSyncItem(self, operation:Operation, fargs:Dict, docid:str, cl:str, keys:Keys, version:int, dtcas:int, size:int, content:str) -> str:
         return content
     
     def register(cls:Type, table:str) -> DocumentDescr:
