@@ -347,7 +347,7 @@ class Document:
         if not hasattr(item, "_ready"):
             item._loadFromJson(item._serial)
             item._oldindexes = item._getAllIndexes()
-            return item
+        return item
     
     def item(self, cls:Type, keys:Keys = tuple()): # -> BaseItem:
         assert self._docid is not None, "Document " + self.id()
