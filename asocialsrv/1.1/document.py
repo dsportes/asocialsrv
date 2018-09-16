@@ -856,7 +856,7 @@ class DOperation(Operation):
         if drec is not None:        # archive found in global cache
             arch = drec[0]
             if arch.version > self.stamp.stamp: # document more recent than the operation stamp
-                raise AppExc("XCW", self.opName, self.org, fid)
+                raise AppExc("XCW", (self.opName, self.org, fid))
             now = drec[1]       # lastGet
             lc = drec[2]        # lastCheck
             if (isfull and arch.isfull) or not isfull:      # fullness is compatible
@@ -879,7 +879,7 @@ class DOperation(Operation):
         now = Stamp.epochNow()
         DOperation._storeArchive(newarch, now)             # store it in global cache
         if newarch.version > self.stamp.stamp:                   # more recent than the operation stamp
-            raise AppExc("XCW", self.opName, self.org, fid)            
+            raise AppExc("XCW", (self.opName, self.org, fid))           
         return newarch
                
     def findInIndex(self, DocumentClass:Type, index:str, startCols:Dict[str, Any], resCols:Tuple[str]) -> Iterable[Dict[str, Any]]:
