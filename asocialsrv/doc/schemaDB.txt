@@ -1,5 +1,6 @@
 SHOW CREATE TABLE yourTable;
 
+/***************** MariaDB *****************************/
 CREATE TABLE `onoff` (
    `org` varchar(16) NOT NULL,
    `ison` int(11) NOT NULL,
@@ -77,12 +78,86 @@ CREATE TABLE `prod_dhx` (
  UNIQUE KEY `prod_dhx_key` (`docid`,`dhx`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 
+/*********** PG ***********************/
 
-
+DROP TABLE IF EXISTS onoff;
 CREATE TABLE onoff (
    org varchar(16) NOT NULL,
    ison int NOT NULL,
    info varchar(512) DEFAULT NULL,
    PRIMARY KEY (org)
- )
- 
+);
+ALTER TABLE onoff OWNER TO "asocial";
+
+DROP TABLE IF EXISTS acctkt;
+CREATE TABLE acctkt (
+	 org varchar(16) NOT NULL,
+	 doctbl varchar(16) NOT NULL,
+	 tktid varchar(100) NOT NULL,
+	 version bigint NOT NULL,
+	 state varchar(4000) NOT NULL,
+	 t0 double precision NOT NULL,
+	 t1 double precision NOT NULL,
+	 t2 bigint NOT NULL,
+	 t3 bigint NOT NULL,
+	 t4 bigint NOT NULL,
+	 t5 bigint NOT NULL,
+	 t6 double precision NOT NULL,
+	 t7 double precision NOT NULL,
+	 f0 double precision NOT NULL,
+	 f1 double precision NOT NULL,
+	 f2 double precision NOT NULL,
+	 f3 double precision NOT NULL,
+	 f4 double precision NOT NULL,
+	 f5 double precision NOT NULL,
+	 f6 double precision NOT NULL,
+	 f7 double precision NOT NULL,
+PRIMARY KEY (org,doctbl,tktid)
+);
+ALTER TABLE acctkt OWNER TO "asocial";
+
+DROP TABLE IF EXISTS prod_compte;
+CREATE TABLE prod_compte (
+ itkey varchar(500) NOT NULL,
+ version bigint NOT NULL,
+ dtcas bigint NOT NULL,
+ size int NOT NULL,
+ serial varchar(4000) DEFAULT NULL,
+ serialgz bytea DEFAULT NULL,
+ PRIMARY KEY (itkey, version, dtcas, size) 
+);
+ALTER TABLE prod_compte OWNER TO "asocial";
+
+DROP INDEX IF EXISTS prod_adr_key;
+DROP TABLE IF EXISTS prod_adr;
+CREATE TABLE prod_adr (
+ cp int NOT NULL,
+ np varchar(16) NOT NULL,
+ docid varchar(32) NOT NULL,
+ da int NOT NULL,
+ na int NOT NULL,
+ PRIMARY KEY (cp,np,docid,da,na)
+);
+ALTER TABLE prod_adr OWNER TO "asocial";
+CREATE INDEX prod_adr_key ON prod_adr (docid,da,na);
+
+DROP INDEX IF EXISTS prod_psrbd_key;
+DROP TABLE IF EXISTS prod_psrbd;
+CREATE TABLE prod_psrbd (
+ psrbd varchar(64) NOT NULL,
+ docid varchar(100) NOT NULL,
+ PRIMARY KEY (psrbd,docid)
+);
+ALTER TABLE prod_psrbd OWNER TO "asocial";
+CREATE INDEX prod_psrbd_key ON prod_psrbd (psrbd,docid);
+
+DROP INDEX IF EXISTS prod_dhx_key;
+DROP TABLE IF EXISTS prod_dhx;
+CREATE TABLE prod_dhx (
+ dhx int NOT NULL,
+ docid varchar(100) NOT NULL,
+ PRIMARY KEY (dhx,docid)
+);
+ALTER TABLE prod_dhx OWNER TO "asocial";
+CREATE INDEX prod_dhx_key ON prod_dhx (docid,dhx);
+
