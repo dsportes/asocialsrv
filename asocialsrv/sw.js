@@ -42,8 +42,11 @@ for(let i = 0, b = 0; b = uib[i]; i++) {
 }
 
 // installation des ressources requises pour la build BC
+let self = this;
 this.addEventListener('install', function(event) {
 	if (TRACEON) console.log("Install de " + BC);
+	// The promise that skipWaiting() returns can be safely ignored.
+    // self.skipWaiting();
 	event.waitUntil(
 		caches.open(CACHENAME)
 		.then(cache => {
@@ -60,9 +63,20 @@ this.addEventListener('install', function(event) {
 	);
 });
 
+/*
+ *  // event.waitUntil() ensures that the service worker is kept alive
+      // long enough to complete the cache update.
+      event.waitUntil(async function() {
+        const cache = await caches.open('my-cache-name');
+        await cache.put(normalizedUrl, await fetchResponseCloneP);
+      }());
+
+ */
+
 // Suppression des caches obsolètes lors d'une activation
-this.addEventListener('activate', function(event) {
-	event.waitUntil(
+this.addEventListener('activate', function(event) {// The promise that skipWaiting() returns can be safely ignored.
+	event.waitUntil( // attend un promise : si ce promise reject() il sort en erreur.
+		// event.waitUntil(clients.claim()); ??? await clients.claim(); ???
 		caches.keys()
 		.then(cacheNames => {
 				if (TRACEON) console.log("Suppression des caches obsolètes sur activation de " + BC);
